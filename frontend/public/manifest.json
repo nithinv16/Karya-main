@@ -1,0 +1,15 @@
+{
+  "short_name": "Karya",
+  "name": "Karya — AI OS for Construction",
+  "description": "Run your construction business from your pocket: workforce, payroll, reports, compliance.",
+  "icons": [
+    { "src": "/icons/icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any maskable" }
+  ],
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#EA580C",
+  "background_color": "#FFFFFF"
+}

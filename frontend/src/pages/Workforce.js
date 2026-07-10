@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import api from "@/lib/api";
+import api, { API, getToken } from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Trash, UsersThree, ShieldCheck, Check, Buildings, PencilSimple, MapPin, User } from "@phosphor-icons/react";
+import { Plus, Trash, UsersThree, ShieldCheck, Check, Buildings, PencilSimple, MapPin, User, FileArrowDown } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { formatMoney, getCountry } from "@/lib/country";
@@ -267,6 +267,27 @@ export default function Workforce() {
               );
             })}
           </div>
+          {(obWorker?.documents?.length > 0) && (
+            <div className="pt-3 border-t border-[#E4E4E7]" data-testid="worker-documents">
+              <p className="overline mb-2">Files (via Telegram)</p>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {obWorker.documents.map((d) => (
+                  <a
+                    key={d.id}
+                    data-testid={`worker-doc-${d.id}`}
+                    href={`${API}/files/${d.path}?auth=${getToken()}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2 border border-[#E4E4E7] px-3 py-2 text-xs font-semibold hover:border-[#EA580C] hover:bg-[#FFF7ED] transition-colors duration-200"
+                  >
+                    <FileArrowDown size={14} weight="bold" className="text-[#EA580C] shrink-0" />
+                    <span className="truncate flex-1">{d.filename}</span>
+                    <span className="text-[#71717A] font-normal shrink-0">{(d.uploaded_at || "").slice(0, 10)}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
           <DialogFooter>
             <button data-testid="save-onboarding-button" disabled={saveOnboarding.isPending} onClick={() => saveOnboarding.mutate()} className="bg-[#EA580C] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200 disabled:opacity-50">{saveOnboarding.isPending ? "Saving…" : "Save"}</button>
           </DialogFooter>

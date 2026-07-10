@@ -4,6 +4,7 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import { CheckCircle, WarningCircle, FloppyDisk, PencilSimple } from "@phosphor-icons/react";
 import { COUNTRIES } from "@/lib/country";
+import TelegramConnect from "@/components/TelegramConnect";
 
 const ROLES = ["Contractor", "Builder / Developer", "MEP", "Civil", "Interiors / Fit-out", "Facility Maintenance", "Other"];
 const REQUIRED = ["name", "phone"];
@@ -225,6 +226,8 @@ export default function Profile() {
           )}
         </div>
       </form>
+
+      <TelegramConnect />
     </div>
   );
 }

@@ -61,6 +61,33 @@ body {
   background-size: 28px 28px;
 }
 
+/* ---------- mobile-app feel ---------- */
+html, body { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.safe-top { padding-top: env(safe-area-inset-top, 0px); }
+
+.press:active { transform: scale(0.96); }
+.press { transition: transform 0.12s ease, background-color 0.2s ease, color 0.2s ease; }
+
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.sheet-up { animation: sheet-up 0.28s cubic-bezier(0.32, 0.72, 0, 1) both; }
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.fade-in { animation: fade-in 0.2s ease-out both; }
+
+@media (max-width: 767px) {
+  button, a, input, select { min-height: 42px; }
+  input, select, textarea { font-size: 16px !important; }
+  #emergent-badge { bottom: 146px !important; right: 10px !important; transform: scale(0.8); transform-origin: bottom right; }
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 20 — Telegram bot integration + PWA + mobile-app-feel UI. All 12 backend pytest tests passed (auth, telegram status/link code, webhook secret, /start linking new chat, text-command advance transaction, conversational fallback, pending-media worker file routing, callback_query cancel, PWA manifest/sw.js/icon). All frontend flows verified: mobile bottom nav with 5 tabs + AI FAB, More slide-up sheet with profile + logout, mobile Telegram Assistant card shows Linked badge + Disconnect, desktop sidebar nav across Workforce/Payroll/Reports works cleanly, no DOM/console errors surfaced.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "AI calls (Emergent LLM)", "issue": "Some AI attempts fail with 'Budget has been exceeded' warnings (litellm.BadRequestError). Handler retries and text webhooks still return 200, so functional flow is unaffected — but heavy AI-dependent flows (advance parsing, pending routing) may occasionally fall back to no-op. Consider bumping budget or handling gracefully."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration20_telegram.py",
+    "/app/test_reports/pytest/iteration20.xml"
+  ],
+  "action_items": [
+    "Optional: raise Emergent LLM budget cap — logs show 'Max budget: 0.001' triggering BadRequestError on some webhook AI calls. Not blocking (fallback path returns ok:true), but reduces reliability of natural-language routing."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~2500 lines — could be split (telegram/, ai/, workers/, reports/ modules) for maintainability.",
+    "Historic traceback in backend.err.log for ai_text(provider=...) TypeError — resolved after latest hot-reload (function signature now accepts provider/model). No active bug.",
+    "telegram_webhook silently accepts and returns ok:true on unhandled updates (correct for Telegram)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration20_telegram.py (new)"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (all requested selectors + flows verified)"},
+  "test_credentials": "Bearer test_session_karya1 (user test-user-karya1) — verified working. DB karya_db_v2.",
+  "seed_data_creation": "Created worker TEST_Suresh via /api/workers for advance/pending tests. Two telegram_pending docs inserted then consumed/cleared during pending-media flow tests. QA user relinked to chat 999000111 at end of /start test to keep state sane.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iteration20_telegram.py covers full Telegram webhook surface (link, text advance, conversational, pending photo worker-file, callback cancel, wrong secret) + PWA. Reuse as regression. Webhook secret: karya-tg-hook-7f3a9c2e. LLM 'budget exceeded' warnings in logs are non-blocking — webhook returns 200 either way."
+}

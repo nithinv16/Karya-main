@@ -104,7 +104,7 @@ def parse_json_block(text: str) -> dict:
         t = t[start:end + 1]
     return json.loads(t)
 
-async def ai_text(system: str, prompt: str, images: Optional[list] = None) -> str:
+async def ai_text(system: str, prompt: str, images: Optional[list] = None, provider: str = "anthropic", model: str = "claude-sonnet-4-6") -> str:
     last_err = None
     for attempt in range(3):
         try:
@@ -112,7 +112,7 @@ async def ai_text(system: str, prompt: str, images: Optional[list] = None) -> st
                 api_key=EMERGENT_LLM_KEY,
                 session_id=f"karya-{uuid.uuid4().hex[:10]}",
                 system_message=system,
-            ).with_model("anthropic", "claude-sonnet-4-6")
+            ).with_model(provider, model)
             msg = UserMessage(text=prompt, file_contents=images) if images else UserMessage(text=prompt)
             resp = await chat.send_message(msg)
             return resp if isinstance(resp, str) else str(resp)
@@ -122,9 +122,9 @@ async def ai_text(system: str, prompt: str, images: Optional[list] = None) -> st
             await asyncio.sleep(1.5 * (attempt + 1))
     raise HTTPException(status_code=502, detail=f"AI temporarily unavailable: {last_err}")
 
-async def ai_json(system: str, prompt: str, images: Optional[list] = None) -> dict:
+async def ai_json(system: str, prompt: str, images: Optional[list] = None, provider: str = "anthropic", model: str = "claude-sonnet-4-6") -> dict:
     for attempt in range(2):
-        raw = await ai_text(system, prompt + "\nRespond with ONLY a valid JSON object, no prose.", images)
+        raw = await ai_text(system, prompt + "\nRespond with ONLY a valid JSON object, no prose.", images, provider=provider, model=model)
         try:
             return parse_json_block(raw)
         except Exception:
@@ -759,7 +759,7 @@ async def _execute_command(text: str, user: dict) -> dict:
             return {"applied": False, "summary": "Couldn't understand the amount."}
         await db.transactions.insert_one({
             "id": new_id(), "owner_id": uid, "worker_id": worker["id"], "type": intent,
-            "amount": amount, "note": parsed.get("note") or f"Via command: {body.text[:80]}",
+            "amount": amount, "note": parsed.get("note") or f"Via command: {text[:80]}",
             "date": today_str(), "created_at": now_iso(),
         })
         return {"applied": True, "summary": f"Recorded {intent} of {money(amount)} for {worker['name']}."}
@@ -804,16 +804,16 @@ async def _execute_command(text: str, user: dict) -> dict:
         if wage > 0:
             await db.transactions.insert_one({
                 "id": new_id(), "owner_id": uid, "worker_id": worker["id"], "type": "wage",
-                "amount": wage, "note": f"Task: {parsed.get('note') or body.text[:80]}", "date": today_str(), "created_at": now_iso(),
+                "amount": wage, "note": f"Task: {parsed.get('note') or text[:80]}", "date": today_str(), "created_at": now_iso(),
             })
         await db.knowledge.insert_one({
             "id": new_id(), "owner_id": uid, "title": f"Task completed — {worker['name']}",
-            "content": body.text, "project_id": worker.get("project_id"), "tags": ["task", "command"],
+            "content": text, "project_id": worker.get("project_id"), "tags": ["task", "command"],
             "created_at": now_iso(),
         })
         return {"applied": True, "summary": f"Logged task for {worker['name']}" + (f" — wage {money(wage)}." if wage > 0 else ".")}
 
-    return {"applied": False, "summary": "I couldn't understand that command. Try e.g. \"Ramesh took an advance of ₹5000\"."}
+    return {"applied": False, "unknown": True, "summary": "I couldn't understand that command. Try e.g. \"Ramesh took an advance of ₹5000\"."}
 
 # ---------------------------------------------------------------- telegram intake
 
@@ -918,14 +918,14 @@ async def telegram_unlink(user: dict = Depends(get_current_user)):
 
 WELCOME_LINKED = (
     "✅ Telegram linked to Karya for <b>{name}</b>.\n\n"
-    "You can now message me naturally. Try:\n"
+    "I'm your site assistant — just talk to me:\n"
     "• <i>“Ramesh took an advance of {amt}”</i>\n"
     "• <i>“Pay Manoj {pay}”</i>\n"
     "• <i>“10 workers arrived at Skyline Tower today”</i>\n"
-    "• Send a <b>voice note</b> and I'll transcribe + act on it.\n"
-    "• Send a <b>photo</b> and I'll attach it to today's daily report.\n"
-    "• Send a <b>PDF</b> (permit, license, notice) and I'll add it to your compliance register.\n\n"
-    "Type /help any time. /unlink to disconnect."
+    "• Send a <b>voice note</b> — I'll transcribe and act on it.\n"
+    "• Send a <b>photo / receipt / PDF</b> — I'll ask what to do with it (worker file, daily report, expense, compliance…). You can also caption it, e.g. <i>“this is Ramesh's ID”</i>.\n"
+    "• Ask me anything — <i>“how much do I owe Ramesh?”</i>\n\n"
+    "Commands: /report today's report · /help · /unlink"
 )
 
 WELCOME_UNLINKED = (
@@ -977,14 +977,231 @@ async def _tg_user_for_chat(chat_id: int) -> Optional[dict]:
     return await db.users.find_one({"telegram_chat_id": chat_id}, {"_id": 0})
 
 
+# ---- conversational agent (pending-media) layer ------------------------------
+
+TG_ACTION_KB = {
+    "inline_keyboard": [
+        [{"text": "📋 Daily report", "callback_data": "act|report"},
+         {"text": "👷 Worker file", "callback_data": "act|worker"}],
+        [{"text": "🧾 Receipt / expense", "callback_data": "act|receipt"},
+         {"text": "🛡️ Compliance", "callback_data": "act|compliance"}],
+        [{"text": "🧠 Save as note", "callback_data": "act|note"},
+         {"text": "✖️ Discard", "callback_data": "act|cancel"}],
+    ]
+}
+
+TG_ROUTER_SYSTEM = """You route a user's instruction about a file they just sent (photo/PDF) to a construction-ops bot.
+Known workers: {workers}
+Output JSON: {{"action": "daily_report|worker_file|receipt|compliance|knowledge|cancel|chat",
+ "worker_name": str|null, "note": str|null}}
+Rules:
+- "add to today's report" / "site progress photo" -> daily_report
+- "upload it under <name>" / "this is <name>'s photo/id/document" / "save to <worker>'s file" -> worker_file with worker_name
+- "this is a receipt/bill/invoice/expense" -> receipt
+- "permit / license / notice / legal or govt document" -> compliance
+- "just save it" / "note it down" -> knowledge
+- "discard / ignore / cancel / delete" -> cancel
+- If the message is unrelated to the file (a question or a normal ops command), use "chat".
+The instruction may be in English, Hindi, or other Indian languages (or transliterated)."""
+
+RECEIPT_SYSTEM = """You extract structured data from a purchase receipt/bill/invoice for a construction contractor.
+Output JSON: {"vendor": str, "date": "YYYY-MM-DD or empty", "total_amount": number, "currency": str,
+ "category": "material|fuel|food|transport|equipment|rent|other", "items": [{"name": str, "qty": str, "amount": number}], "summary": str}
+If the image/text is not a receipt, set total_amount to 0 and explain in summary."""
+
+
+async def _get_pending(user_id: str) -> Optional[dict]:
+    return await db.telegram_pending.find_one({"user_id": user_id}, {"_id": 0}, sort=[("created_at", -1)])
+
+
+async def _clear_pending(user_id: str):
+    await db.telegram_pending.delete_many({"user_id": user_id})
+
+
+def _pending_attachment(pending: dict) -> dict:
+    return {
+        "id": new_id(), "filename": pending.get("filename") or "file",
+        "content_type": pending.get("content_type") or "application/octet-stream",
+        "size": pending.get("size", 0), "path": pending["path"], "url": None,
+        "extracted_text": (pending.get("extracted_text") or "")[:800],
+        "uploaded_at": now_iso(), "source": "telegram", "caption": pending.get("caption", ""),
+    }
+
+
+async def _attach_to_worker(chat_id: int, user: dict, pending: dict, worker: dict):
+    att = _pending_attachment(pending)
+    await db.workers.update_one({"id": worker["id"]}, {"$push": {"documents": att}})
+    await _clear_pending(user["user_id"])
+    await tg_send(chat_id, f"👷 Saved <b>{att['filename']}</b> under <b>{worker['name']}</b>'s file. View it in Karya → Workforce.")
+
+
+async def _file_pending_to_compliance(chat_id: int, user: dict, pending: dict):
+    text = pending.get("extracted_text") or ""
+    filename = pending.get("filename") or "document"
+    title = filename.rsplit(".", 1)[0][:120] or "Uploaded compliance document"
+    att = _pending_attachment(pending)
+    item = {
+        "id": new_id(), "owner_id": user["user_id"], "title": title, "category": "permit",
+        "due_date": "", "expiry_date": "", "project_ids": [], "status": "pending",
+        "document_text": (text or "")[:8000], "attachments": [att],
+        "analysis": None, "renewal_plan": None, "penalty_estimate": None,
+        "history": [{"action": "uploaded_via_telegram", "at": now_iso(), "note": filename}],
+        "created_at": now_iso(),
+    }
+    await db.compliance.insert_one({**item})
+    await _clear_pending(user["user_id"])
+    await tg_send(chat_id, f"📄 <b>{title}</b> added to your compliance register. Running AI analysis…")
+    try:
+        ctx = country_ctx(user)
+        analysis = await ai_json(
+            COMPLIANCE_SYSTEM.format(country_context=ctx["context_prompt"]),
+            f"Title: {title}\nCategory: permit\nDocument text:\n{(text or '')[:5000]}",
+        )
+        patch: Dict[str, Any] = {"analysis": analysis}
+        if analysis and analysis.get("expiry_date"):
+            patch["expiry_date"] = analysis["expiry_date"]
+            patch["due_date"] = analysis["expiry_date"]
+        await db.compliance.update_one({"id": item["id"]}, {"$set": patch, "$push": {"history": {"action": "analyzed", "at": now_iso(), "note": ""}}})
+        summary_line = (analysis or {}).get("summary") or "Analysis complete — open Karya to review."
+        risk = (analysis or {}).get("risk_level") or ""
+        expiry_hint = f"\n🗓 <b>Expiry:</b> {analysis.get('expiry_date')}" if (analysis and analysis.get("expiry_date")) else ""
+        await tg_send(chat_id, f"🧠 <b>{title}</b>{expiry_hint}\n<b>Risk:</b> {risk}\n{summary_line[:600]}")
+    except Exception as e:
+        logger.warning(f"tg compliance analysis failed: {e}")
+        await tg_send(chat_id, "⚠️ Analysis failed but the document is saved. Open Karya → Compliance to review manually.")
+
+
+async def _apply_pending_action(chat_id: int, action: str, user: dict, pending: dict, worker_name: Optional[str], note: str):
+    uid = user["user_id"]
+    if action == "cancel":
+        await _clear_pending(uid)
+        await tg_send(chat_id, "🗑 Discarded.")
+        return
+    if action == "worker_file":
+        workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
+        worker = find_by_name(workers, worker_name)
+        if not worker:
+            await db.telegram_pending.update_one({"id": pending["id"]}, {"$set": {"stage": "await_worker"}})
+            names = ", ".join(w["name"] for w in workers[:15]) or "no workers yet — add one first"
+            await tg_send(chat_id, f"👷 Which worker should I file this under?\nKnown: {names}")
+            return
+        await _attach_to_worker(chat_id, user, pending, worker)
+        return
+    if action == "daily_report":
+        att = _pending_attachment(pending)
+        today = today_str()
+        field = "photos" if pending.get("kind") == "photo" else "documents"
+        await db.telegram_wip.update_one(
+            {"user_id": uid, "date": today},
+            {"$push": {field: att}, "$setOnInsert": {"created_at": now_iso(), "notes": ""}, "$set": {"updated_at": now_iso()}},
+            upsert=True,
+        )
+        if note:
+            await db.telegram_wip.update_one({"user_id": uid, "date": today}, {"$set": {"last_caption": note}})
+        wip = await db.telegram_wip.find_one({"user_id": uid, "date": today}, {"_id": 0})
+        n = len(wip.get("photos") or []) + len(wip.get("documents") or [])
+        await _clear_pending(uid)
+        await tg_send(chat_id, f"📋 Added to today's report draft ({n} file(s) attached). Send more, or /report to generate the daily report.")
+        return
+    if action == "receipt":
+        await tg_send(chat_id, "🧾 Reading the receipt…")
+        parsed = {}
+        try:
+            if pending.get("kind") == "photo" or (pending.get("content_type") or "").startswith("image/"):
+                data, _ct = await asyncio.to_thread(get_object, pending["path"])
+                b64 = base64.b64encode(data).decode()
+                parsed = await ai_json(RECEIPT_SYSTEM, "Extract this receipt.", images=[ImageContent(image_base64=b64)], provider="openai", model="gpt-4o")
+            else:
+                parsed = await ai_json(RECEIPT_SYSTEM, f"Receipt text:\n{(pending.get('extracted_text') or '')[:5000]}", provider="openai", model="gpt-4o")
+        except Exception as e:
+            logger.warning(f"receipt parse failed: {e}")
+        amount = float(parsed.get("total_amount") or 0)
+        att = _pending_attachment(pending)
+        exp = {
+            "id": new_id(), "owner_id": uid, "vendor": parsed.get("vendor") or "", "date": parsed.get("date") or today_str(),
+            "amount": amount, "currency": parsed.get("currency") or country_ctx(user)["currency_code"],
+            "category": parsed.get("category") or "other", "items": parsed.get("items") or [],
+            "summary": parsed.get("summary") or "", "attachment": att, "source": "telegram", "created_at": now_iso(),
+        }
+        await db.expenses.insert_one({**exp})
+        await db.knowledge.insert_one({
+            "id": new_id(), "owner_id": uid,
+            "title": f"Receipt — {exp['vendor'] or 'unknown vendor'} ({money_str(amount, user)})",
+            "content": exp["summary"] or f"Receipt of {money_str(amount, user)} — category {exp['category']}.",
+            "project_id": None, "tags": ["receipt", "expense", "telegram"], "attachment": att, "created_at": now_iso(),
+        })
+        await _clear_pending(uid)
+        lines = "\n".join(f"• {i.get('name')} — {money_str(i.get('amount') or 0, user)}" for i in (exp["items"] or [])[:6])
+        await tg_send(chat_id, f"🧾 <b>Receipt recorded</b>\nVendor: {exp['vendor'] or '—'}\nTotal: <b>{money_str(amount, user)}</b>\nCategory: {exp['category']}\n{lines}".strip())
+        return
+    if action == "compliance":
+        await _file_pending_to_compliance(chat_id, user, pending)
+        return
+    # knowledge (default)
+    att = _pending_attachment(pending)
+    await db.knowledge.insert_one({
+        "id": new_id(), "owner_id": uid, "title": f"Telegram upload — {att['filename']}",
+        "content": (note or pending.get("caption") or "Saved from Telegram.") + (f"\n\nExtracted text:\n{(pending.get('extracted_text') or '')[:2000]}" if pending.get("extracted_text") else ""),
+        "project_id": None, "tags": ["telegram", "upload"], "attachment": att, "created_at": now_iso(),
+    })
+    await _clear_pending(uid)
+    await tg_send(chat_id, f"🧠 Saved <b>{att['filename']}</b> to Org Memory.")
+
+
+async def _route_pending_instruction(chat_id: int, text: str, user: dict, pending: dict):
+    workers = await db.workers.find({"owner_id": user["user_id"]}, {"_id": 0}).to_list(1000)
+    try:
+        parsed = await ai_json(
+            TG_ROUTER_SYSTEM.format(workers=", ".join(w["name"] for w in workers) or "none"),
+            f"File: {pending.get('kind')} ({pending.get('filename')})\nInstruction: {text}",
+            provider="openai", model="gpt-4o",
+        )
+    except Exception:
+        parsed = {"action": "chat"}
+    action = parsed.get("action") or "chat"
+    if action == "chat":
+        await _handle_tg_command_text(chat_id, text, user)
+        return
+    await _apply_pending_action(chat_id, action, user, pending, parsed.get("worker_name"), parsed.get("note") or text)
+
+
+async def _handle_tg_command_text(chat_id: int, text: str, user: dict):
+    result = await _execute_command(text, user)
+    if result.get("applied"):
+        await tg_send(chat_id, f"✅ {result.get('summary') or 'Done.'}")
+        return
+    if not result.get("unknown"):
+        await tg_send(chat_id, f"🤔 {result.get('summary') or 'Could not apply that.'}")
+        return
+    # Not an ops command — answer conversationally from operational data.
+    try:
+        answer = await _assistant_answer(user, text)
+        await tg_send(chat_id, f"💬 {answer[:3800]}")
+    except Exception:
+        await tg_send(chat_id, f"🤔 {result.get('summary')}")
+
+
 async def _handle_tg_text(chat_id: int, text: str, user: dict):
-    """Route a plain-text message from a linked user through the shared command executor."""
     if not text:
         return
-    result = await _execute_command(text, user)
-    summary = result.get("summary") or ("Done." if result.get("applied") else "Couldn't apply that.")
-    icon = "✅" if result.get("applied") else "🤔"
-    await tg_send(chat_id, f"{icon} {summary}")
+    pending = await _get_pending(user["user_id"])
+    if pending:
+        if text.lower().strip() in ("cancel", "discard", "stop", "no"):
+            await _clear_pending(user["user_id"])
+            await tg_send(chat_id, "🗑 Discarded.")
+            return
+        if pending.get("stage") == "await_worker":
+            workers = await db.workers.find({"owner_id": user["user_id"]}, {"_id": 0}).to_list(1000)
+            worker = find_by_name(workers, text)
+            if worker:
+                await _attach_to_worker(chat_id, user, pending, worker)
+            else:
+                names = ", ".join(w["name"] for w in workers[:15]) or "none yet"
+                await tg_send(chat_id, f"⚠️ I couldn't find \"{text}\". Known workers: {names}. Reply with one of these names, or say \"cancel\".")
+            return
+        await _route_pending_instruction(chat_id, text, user, pending)
+        return
+    await _handle_tg_command_text(chat_id, text, user)
 
 
 async def _handle_tg_voice(chat_id: int, file_id: str, user: dict):
@@ -1012,7 +1229,7 @@ async def _handle_tg_voice(chat_id: int, file_id: str, user: dict):
 
 
 async def _handle_tg_photo(chat_id: int, file_id: str, caption: str, user: dict):
-    """Photos become an attachment on today's draft daily report."""
+    """Photos become a pending item — the agent asks what to do (or uses the caption)."""
     dl = await tg_get_file_bytes(file_id)
     if not dl:
         await tg_send(chat_id, "⚠️ Couldn't download the photo.")
@@ -1020,7 +1237,6 @@ async def _handle_tg_photo(chat_id: int, file_id: str, caption: str, user: dict)
     data, filename = dl
     if not filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
         filename = (filename or "photo") + ".jpg"
-    # Reuse the object-storage upload pipeline.
     try:
         ext = filename.rsplit(".", 1)[-1].lower() or "jpg"
         path = f"{APP_NAME}/telegram/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
@@ -1029,34 +1245,27 @@ async def _handle_tg_photo(chat_id: int, file_id: str, caption: str, user: dict)
         logger.warning(f"tg photo storage failed: {e}")
         await tg_send(chat_id, "⚠️ Couldn't save the photo. Please retry.")
         return
-    attachment = {
-        "id": new_id(), "filename": filename, "content_type": "image/jpeg",
-        "size": len(data), "path": stored["path"], "url": None,
-        "extracted_text": "", "uploaded_at": now_iso(), "source": "telegram",
-        "caption": caption or "",
+    await _clear_pending(user["user_id"])
+    pending = {
+        "id": new_id(), "user_id": user["user_id"], "chat_id": chat_id, "kind": "photo",
+        "path": stored["path"], "filename": filename, "content_type": "image/jpeg",
+        "size": len(data), "extracted_text": "", "caption": caption or "",
+        "stage": "await_action", "created_at": now_iso(),
     }
-    # Append to today's WIP report bucket (a per-user staging record).
-    today = today_str()
-    await db.telegram_wip.update_one(
-        {"user_id": user["user_id"], "date": today},
-        {"$push": {"photos": attachment}, "$setOnInsert": {"created_at": now_iso(), "notes": ""}, "$set": {"updated_at": now_iso()}},
-        upsert=True,
-    )
+    await db.telegram_pending.insert_one({**pending})
+    pending.pop("_id", None)
     if caption:
-        await db.telegram_wip.update_one(
-            {"user_id": user["user_id"], "date": today},
-            {"$set": {"last_caption": caption}},
+        await _route_pending_instruction(chat_id, caption, user, pending)
+    else:
+        await tg_send(
+            chat_id,
+            "📸 Got the photo. What should I do with it?\nTap a button — or just tell me, e.g. <i>“upload it under Ramesh's file”</i> or <i>“this is a cement receipt”</i>.",
+            TG_ACTION_KB,
         )
-    wip = await db.telegram_wip.find_one({"user_id": user["user_id"], "date": today}, {"_id": 0})
-    n = len(wip.get("photos", [])) if wip else 1
-    msg = (
-        f"📸 Photo saved to today's report draft ({n} attached).\n"
-        "Send more photos, notes, or /report to generate the daily report."
-    )
-    await tg_send(chat_id, msg)
 
 
-async def _handle_tg_document(chat_id: int, file_id: str, filename: str, mime: str, user: dict):
+async def _handle_tg_document(chat_id: int, file_id: str, filename: str, mime: str, caption: str, user: dict):
+    """Documents (PDFs etc.) become a pending item awaiting the user's instruction."""
     dl = await tg_get_file_bytes(file_id)
     if not dl:
         await tg_send(chat_id, "⚠️ Couldn't download the document.")
@@ -1064,17 +1273,10 @@ async def _handle_tg_document(chat_id: int, file_id: str, filename: str, mime: s
     data, downloaded_name = dl
     filename = filename or downloaded_name or "document"
     is_image = mime.startswith("image/") if mime else filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
-    is_pdf = "pdf" in mime.lower() if mime else filename.lower().endswith(".pdf")
-    if is_image:
-        # Route images uploaded as documents through the photo pipeline.
-        await _handle_tg_photo(chat_id, file_id, "", user)
-        return
-    if not is_pdf:
-        await tg_send(chat_id, "📎 Received. I can currently process photos and PDFs — text documents will land as raw attachments on your next compliance item.")
     try:
-        ext = (filename.rsplit(".", 1)[-1] if "." in filename else "pdf").lower()
+        ext = (filename.rsplit(".", 1)[-1] if "." in filename else "bin").lower()
         path = f"{APP_NAME}/telegram/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
-        stored = await asyncio.to_thread(put_object, path, data, mime or "application/pdf")
+        stored = await asyncio.to_thread(put_object, path, data, mime or "application/octet-stream")
     except Exception as e:
         logger.warning(f"tg doc storage failed: {e}")
         await tg_send(chat_id, "⚠️ Couldn't save the document.")
@@ -1084,45 +1286,25 @@ async def _handle_tg_document(chat_id: int, file_id: str, filename: str, mime: s
         text = extract_text(data, mime or "", filename)
     except Exception:
         pass
-    # Create a compliance item automatically.
-    title = filename.rsplit(".", 1)[0][:120] or "Uploaded compliance document"
-    item = {
-        "id": new_id(), "owner_id": user["user_id"], "title": title, "category": "permit",
-        "due_date": "", "expiry_date": "", "project_ids": [], "status": "pending",
-        "document_text": (text or "")[:8000],
-        "attachments": [{
-            "id": new_id(), "filename": filename, "content_type": mime or "application/pdf",
-            "size": len(data), "path": stored["path"], "url": None,
-            "extracted_text": text[:800] if text else "", "uploaded_at": now_iso(), "source": "telegram",
-        }],
-        "analysis": None, "renewal_plan": None, "penalty_estimate": None,
-        "history": [{"action": "uploaded_via_telegram", "at": now_iso(), "note": filename}],
-        "created_at": now_iso(),
+    await _clear_pending(user["user_id"])
+    pending = {
+        "id": new_id(), "user_id": user["user_id"], "chat_id": chat_id,
+        "kind": "photo" if is_image else "document",
+        "path": stored["path"], "filename": filename,
+        "content_type": mime or ("image/jpeg" if is_image else "application/octet-stream"),
+        "size": len(data), "extracted_text": text or "", "caption": caption or "",
+        "stage": "await_action", "created_at": now_iso(),
     }
-    await db.compliance.insert_one({**item})
-    await tg_send(
-        chat_id,
-        f"📄 <b>{title}</b> added to your compliance register. Running AI analysis…",
-    )
-    # Analyze in the background.
-    try:
-        ctx = country_ctx(user)
-        analysis = await ai_json(
-            COMPLIANCE_SYSTEM.format(country_context=ctx["context_prompt"]),
-            f"Title: {title}\nCategory: permit\nDocument text:\n{(text or '')[:5000]}",
+    await db.telegram_pending.insert_one({**pending})
+    pending.pop("_id", None)
+    if caption:
+        await _route_pending_instruction(chat_id, caption, user, pending)
+    else:
+        await tg_send(
+            chat_id,
+            f"📄 Received <b>{filename}</b>. What should I do with it?\nTap a button — or tell me, e.g. <i>“it's Manoj's labour card”</i> or <i>“add to compliance”</i>.",
+            TG_ACTION_KB,
         )
-        patch: Dict[str, Any] = {"analysis": analysis}
-        if analysis and analysis.get("expiry_date"):
-            patch["expiry_date"] = analysis["expiry_date"]
-            patch["due_date"] = analysis["expiry_date"]
-        await db.compliance.update_one({"id": item["id"]}, {"$set": patch, "$push": {"history": {"action": "analyzed", "at": now_iso(), "note": ""}}})
-        summary_line = (analysis or {}).get("summary") or "Analysis complete — open Karya to review."
-        risk = (analysis or {}).get("risk_level") or ""
-        expiry_hint = f"\n🗓 <b>Expiry:</b> {analysis.get('expiry_date')}" if (analysis and analysis.get("expiry_date")) else ""
-        await tg_send(chat_id, f"🧠 <b>{title}</b>{expiry_hint}\n<b>Risk:</b> {risk}\n{summary_line[:600]}")
-    except Exception as e:
-        logger.warning(f"tg document analysis failed: {e}")
-        await tg_send(chat_id, "⚠️ Analysis failed but the document is saved. Open Karya → Compliance to review manually.")
 
 
 async def _handle_tg_report_command(chat_id: int, user: dict):
@@ -1180,6 +1362,29 @@ async def telegram_webhook(request: Request):
         update = await request.json()
     except Exception:
         return {"ok": True}
+
+    # Inline-button taps (choose what to do with a pending file).
+    cq = update.get("callback_query")
+    if cq:
+        await tg_api("answerCallbackQuery", {"callback_query_id": cq.get("id")})
+        cq_chat_id = ((cq.get("message") or {}).get("chat") or {}).get("id")
+        data = cq.get("data") or ""
+        if not cq_chat_id:
+            return {"ok": True}
+        user = await _tg_user_for_chat(cq_chat_id)
+        if not user:
+            await tg_send(cq_chat_id, WELCOME_UNLINKED)
+            return {"ok": True}
+        pending = await _get_pending(user["user_id"])
+        if not pending:
+            await tg_send(cq_chat_id, "Nothing pending — send me a photo or document first.")
+            return {"ok": True}
+        action_map = {"report": "daily_report", "worker": "worker_file", "receipt": "receipt",
+                      "compliance": "compliance", "note": "knowledge", "cancel": "cancel"}
+        action = action_map.get(data.split("|", 1)[-1], "knowledge")
+        await _apply_pending_action(cq_chat_id, action, user, pending, None, "")
+        return {"ok": True}
+
     msg = update.get("message") or update.get("edited_message") or {}
     if not msg:
         return {"ok": True}
@@ -1232,7 +1437,7 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
     if msg.get("document"):
         doc = msg["document"]
-        await _handle_tg_document(chat_id, doc.get("file_id"), doc.get("file_name", ""), doc.get("mime_type", ""), user)
+        await _handle_tg_document(chat_id, doc.get("file_id"), doc.get("file_name", ""), doc.get("mime_type", ""), caption, user)
         return {"ok": True}
 
     if text:
@@ -1252,13 +1457,29 @@ async def telegram_register_webhook(user: dict = Depends(get_current_user)):
     payload = {
         "url": webhook_url,
         "secret_token": TELEGRAM_WEBHOOK_SECRET,
-        "allowed_updates": ["message", "edited_message"],
+        "allowed_updates": ["message", "edited_message", "callback_query"],
         "drop_pending_updates": False,
     }
     r = await tg_api("setWebhook", payload)
     if not r.get("ok"):
         raise HTTPException(status_code=502, detail=f"Telegram rejected setWebhook: {r}")
     return {"ok": True, "webhook_url": webhook_url, "description": r.get("description")}
+
+
+@app.on_event("startup")
+async def _tg_autoregister_webhook():
+    """Register the Telegram webhook automatically when the server boots."""
+    if not _tg_configured() or not BACKEND_PUBLIC_URL:
+        return
+    try:
+        r = await tg_api("setWebhook", {
+            "url": f"{BACKEND_PUBLIC_URL}/api/telegram/webhook",
+            "secret_token": TELEGRAM_WEBHOOK_SECRET,
+            "allowed_updates": ["message", "edited_message", "callback_query"],
+        })
+        logger.info(f"telegram setWebhook on startup ok={r.get('ok')} {r.get('description', '')}")
+    except Exception as e:
+        logger.warning(f"telegram webhook autoregister failed: {e}")
 
 
 # ---------------------------------------------------------------- compliance
@@ -1707,8 +1928,7 @@ async def ask_knowledge(body: AskIn, user: dict = Depends(get_current_user)):
 
 # ---------------------------------------------------------------- assistant
 
-@api.post("/assistant/ask")
-async def assistant_ask(body: AskIn, user: dict = Depends(get_current_user)):
+async def _assistant_answer(user: dict, question: str) -> str:
     uid = user["user_id"]
     workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
     txns = await db.transactions.find({"owner_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(3000)
@@ -1739,8 +1959,13 @@ async def assistant_ask(body: AskIn, user: dict = Depends(get_current_user)):
         "\n\nSUBCONTRACTOR LEDGERS:\n" + ("\n".join(sub_lines) or "none") +
         "\n\nRECENT TRANSACTIONS:\n" + (recent or "none")
     )
-    answer = await ai_text(system[:28000], body.question)
-    return {"answer": answer.strip()}
+    answer = await ai_text(system[:28000], question)
+    return answer.strip()
+
+
+@api.post("/assistant/ask")
+async def assistant_ask(body: AskIn, user: dict = Depends(get_current_user)):
+    return {"answer": await _assistant_answer(user, body.question)}
 
 # ---------------------------------------------------------------- dashboard
 
