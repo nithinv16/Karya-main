@@ -17,6 +17,7 @@ import Knowledge from "@/pages/Knowledge";
 import Insights from "@/pages/Insights";
 import DailyReports from "@/pages/DailyReports";
 import Onboarding from "@/pages/Onboarding";
+import Profile from "@/pages/Profile";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -81,6 +82,7 @@ function AppRouter() {
         <Route path="/sops" element={<Sops />} />
         <Route path="/knowledge" element={<Knowledge />} />
         <Route path="/insights" element={<Insights />} />
+        <Route path="/profile" element={<Profile />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

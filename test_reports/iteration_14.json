@@ -1,0 +1,42 @@
+{
+  "summary": "Tested Profile page + PUT /api/auth/profile. Backend 10/10 pass. Frontend: sidebar profile-link, email, navigation, banner (complete/green), Edit/Save/Cancel logic and API integration all work. CRITICAL frontend bug: typing in any profile field loses focus after every keystroke because <Field> is declared inside <Profile> and gets remounted on every render.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "/app/frontend/src/pages/Profile.js — inline Field component",
+        "issue": "Field component is defined INSIDE the Profile function body (lines 68-103). Every setState (setForm on keystroke, setEditing, useEffect setForm on user refresh) creates a new Field function reference, so React unmounts/remounts every input on every render. Result: (1) typing 1 char blurs the input — user cannot type more than 1 character per focus (reproduced: typed 'HELLO', only 'H' was accepted then document.activeElement became null); (2) transient state where Save button renders but underlying inputs briefly still show disabled=true, causing flaky UX; (3) React re-mount thrash. Fix: move `Field` component out of the Profile function (module scope) OR inline the JSX for each field. This is a P0 blocker for the edit flow — real users literally cannot edit their profile.",
+        "selector": "[data-testid=profile-name] / profile-phone / profile-company_name / profile-default_client_phone / profile-address",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "App.js Protected guard vs Profile incomplete-state UI",
+        "issue": "Protected guard (App.js line 32) redirects any user with profile_complete=false to /onboarding. This means the incomplete-state code paths in Profile.js (orange banner mentioning 'name, phone') and AppLayout.js ([data-testid=profile-incomplete-dot]) are UNREACHABLE via normal UI navigation — an incomplete user is bounced to /onboarding before AppLayout or /profile can render. Either the review spec expectations are wrong, or the /profile route should be allowed for incomplete users (loosen Protected for /profile, or provide a link from /onboarding to /profile). Currently the orange banner + dot are effectively dead code.",
+        "selector": "[data-testid=profile-status-banner], [data-testid=profile-incomplete-dot]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration14_profile.py", "/app/test_reports/pytest/iter14.xml"],
+  "action_items": [
+    "URGENT: Move the `Field` component in /app/frontend/src/pages/Profile.js OUT of the Profile function (module scope) or replace with inline JSX. Verify by typing multiple characters into name/phone/company and confirming focus is retained.",
+    "Decide product intent for incomplete-state visibility: either allow /profile even when profile_complete=false (change Protected guard in App.js), or remove the orange-banner / sidebar-dot dead code. The review spec expects both to be visible.",
+    "After the Field fix, re-run playwright to confirm real Playwright .click() (not just JS click) triggers state changes cleanly."
+  ],
+  "critical_code_review_comments": [
+    "Profile.js: `Field` defined inside `Profile` (line 68) — anti-pattern that causes remount every render (focus loss + StrictMode flicker).",
+    "Profile.js line 64-65: `!((user[k] || '').trim && user[k].trim())` is convoluted; simpler `!user[k]?.trim()` works.",
+    "AppLayout.js sidebar profile block: nested <button> inside <button>? No, the outer button contains a picture div and text — but the sibling Sign out is a separate button (OK). Verify keyboard/screen-reader semantics.",
+    "Backend PUT /api/auth/profile does not validate phone format; may accept empty spaces beyond trim. Low priority."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration14_profile.py"],
+  "success_rate": {"backend": "100%", "frontend": "60% (edit flow broken by focus-loss bug)"},
+  "test_credentials": "Bearer test_session_karya1 for user test-user-karya1 (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "Toggled test-user-karya1 profile fields via PUT /api/auth/profile during tests. Final state reset to: name='QA Karya', phone='+919999912345', company_name='Karya QA Co', role='Contractor', default_client_phone='+919888812345', address='Mumbai, MH', profile_complete=true.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend PUT/GET auth/profile fully verified in test_iteration14_profile.py. Frontend: sidebar block, navigation, banner-complete branch, view/edit toggle UI states, Save API call all work. The Edit form is UNUSABLE due to focus loss — Field defined inline. Also, incomplete-state UI (orange banner + sidebar dot) is unreachable because Protected redirects incomplete users to /onboarding. Once main agent fixes the inline-Field issue, re-verify: (1) can type 'Hello World' into name field and value stays 'Hello World'; (2) Playwright's page.click on profile-edit-button works without JS fallback; (3) full edit → save cycle end-to-end.",
+  "rca of the issue": "React re-renders create a new Field function type each render because Field is closed over in Profile's body. React's reconciler sees each render's Field as a NEW component type, so it unmounts the previous <input> and mounts a fresh one. Every keystroke -> setForm -> Profile re-render -> new Field type -> input unmount+remount -> focus lost. This is a well-known React anti-pattern. Fix: extract Field to module scope, receive `editing`, `form`, `setForm` as props (or use useCallback + React.memo)."
+}

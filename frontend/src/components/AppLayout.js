@@ -69,19 +69,31 @@ export default function AppLayout() {
           ))}
         </nav>
         <div className="border-t border-[#E4E4E7] p-4">
-          <div className="flex items-center gap-3 mb-3">
+          <button
+            data-testid="profile-link"
+            onClick={() => navigate("/profile")}
+            className={`w-full flex items-center gap-3 mb-3 p-2 -m-2 text-left hover:bg-[#F4F4F5] transition-colors duration-200 ${location.pathname === "/profile" ? "bg-[#FFF7ED]" : ""}`}
+            title="Open your profile"
+          >
             {user?.picture ? (
-              <img src={user.picture} alt="" className="w-8 h-8 object-cover" />
+              <img src={user.picture} alt="" className="w-8 h-8 object-cover shrink-0" />
             ) : (
-              <div className="w-8 h-8 bg-[#09090B] text-white flex items-center justify-center text-xs font-bold">
+              <div className="w-8 h-8 bg-[#09090B] text-white flex items-center justify-center text-xs font-bold shrink-0">
                 {user?.name?.[0] || "U"}
               </div>
             )}
-            <div className="min-w-0">
-              <p className="text-sm font-semibold truncate">{user?.name}</p>
-              <p className="text-xs text-[#71717A] truncate">{user?.company_name}</p>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold truncate flex items-center gap-1.5">
+                {user?.name || "Set up profile"}
+                {user?.profile_complete === false && (
+                  <span data-testid="profile-incomplete-dot" className="w-1.5 h-1.5 bg-[#EA580C] shrink-0" title="Profile incomplete" />
+                )}
+              </p>
+              <p data-testid="profile-email" className="text-xs text-[#71717A] truncate underline underline-offset-2 decoration-transparent hover:decoration-[#EA580C] transition-colors duration-200">
+                {user?.email}
+              </p>
             </div>
-          </div>
+          </button>
           <button
             data-testid="logout-button"
             onClick={logout}
