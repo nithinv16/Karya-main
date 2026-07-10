@@ -3,6 +3,7 @@ import io
 import re
 import json
 import uuid
+import secrets
 import base64
 import asyncio
 import logging
@@ -714,13 +715,18 @@ Rules:
 
 @api.post("/command")
 async def run_command(body: CommandIn, user: dict = Depends(get_current_user)):
+    return await _execute_command(body.text, user)
+
+
+async def _execute_command(text: str, user: dict) -> dict:
+    """Shared NL → action executor. Reused by /command HTTP endpoint AND Telegram intake."""
     uid = user["user_id"]
     workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
     projects = await db.projects.find({"owner_id": uid}, {"_id": 0}).to_list(500)
     prompt = (
         f"Known workers: {', '.join(w['name'] for w in workers) or 'none'}\n"
         f"Known projects: {', '.join(p['name'] for p in projects) or 'none'}\n"
-        f"Command: {body.text}"
+        f"Command: {text}"
     )
     try:
         parsed = await ai_json(COMMAND_SYSTEM, prompt)
@@ -728,8 +734,7 @@ async def run_command(body: CommandIn, user: dict = Depends(get_current_user)):
         return {"applied": False, "summary": "Couldn't reach the AI parser. Try again."}
     intent = parsed.get("intent", "unknown")
 
-    def rupees(n):
-        return f"₹{int(n or 0):,}"
+    money = _money_fn(user)
 
     if intent == "add_worker":
         name = parsed.get("worker_name") or parsed.get("note")
@@ -757,7 +762,7 @@ async def run_command(body: CommandIn, user: dict = Depends(get_current_user)):
             "amount": amount, "note": parsed.get("note") or f"Via command: {body.text[:80]}",
             "date": today_str(), "created_at": now_iso(),
         })
-        return {"applied": True, "summary": f"Recorded {intent} of {rupees(amount)} for {worker['name']}."}
+        return {"applied": True, "summary": f"Recorded {intent} of {money(amount)} for {worker['name']}."}
 
     if intent == "attendance":
         proj = find_by_name(projects, parsed.get("project_name"))
@@ -787,7 +792,7 @@ async def run_command(body: CommandIn, user: dict = Depends(get_current_user)):
                 "id": new_id(), "owner_id": uid, "worker_id": worker["id"], "type": "wage",
                 "amount": wage, "note": f"{days} day(s) work", "date": today_str(), "created_at": now_iso(),
             })
-        return {"applied": True, "summary": f"Logged {days} day(s) for {worker['name']} — wage {rupees(wage)}."}
+        return {"applied": True, "summary": f"Logged {days} day(s) for {worker['name']} — wage {money(wage)}."}
 
     if intent == "complete_task":
         worker = find_by_name(workers, parsed.get("worker_name"))
@@ -806,9 +811,455 @@ async def run_command(body: CommandIn, user: dict = Depends(get_current_user)):
             "content": body.text, "project_id": worker.get("project_id"), "tags": ["task", "command"],
             "created_at": now_iso(),
         })
-        return {"applied": True, "summary": f"Logged task for {worker['name']}" + (f" — wage {rupees(wage)}." if wage > 0 else ".")}
+        return {"applied": True, "summary": f"Logged task for {worker['name']}" + (f" — wage {money(wage)}." if wage > 0 else ".")}
 
     return {"applied": False, "summary": "I couldn't understand that command. Try e.g. \"Ramesh took an advance of ₹5000\"."}
+
+# ---------------------------------------------------------------- telegram intake
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+TG_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+TG_FILE_API = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}"
+
+
+class TgLinkResponse(BaseModel):
+    code: str
+    bot_username: Optional[str] = None
+    deep_link: Optional[str] = None
+
+
+def _tg_configured() -> bool:
+    return bool(TELEGRAM_BOT_TOKEN)
+
+
+async def tg_api(method: str, payload: dict) -> dict:
+    """Fire a Telegram Bot API call. Returns the JSON body (or empty dict on failure)."""
+    if not _tg_configured():
+        return {}
+    try:
+        r = await asyncio.to_thread(
+            http_requests.post, f"{TG_API}/{method}", json=payload, timeout=15,
+        )
+        return r.json() if r.content else {}
+    except Exception as e:
+        logger.warning(f"tg_api {method} failed: {e}")
+        return {}
+
+
+async def tg_send(chat_id: int, text: str, reply_markup: Optional[dict] = None):
+    payload = {"chat_id": chat_id, "text": text[:4000], "parse_mode": "HTML"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    return await tg_api("sendMessage", payload)
+
+
+async def tg_get_file_bytes(file_id: str) -> Optional[tuple[bytes, str]]:
+    """Resolve a Telegram file_id to (bytes, filename)."""
+    info = await tg_api("getFile", {"file_id": file_id})
+    if not info.get("ok"):
+        return None
+    file_path = info["result"]["file_path"]
+    try:
+        r = await asyncio.to_thread(http_requests.get, f"{TG_FILE_API}/{file_path}", timeout=30)
+        r.raise_for_status()
+        return r.content, os.path.basename(file_path)
+    except Exception as e:
+        logger.warning(f"tg download failed: {e}")
+        return None
+
+
+@api.get("/telegram/status")
+async def telegram_status(user: dict = Depends(get_current_user)):
+    linked = bool(user.get("telegram_chat_id"))
+    return {
+        "configured": _tg_configured(),
+        "linked": linked,
+        "telegram_username": user.get("telegram_username"),
+        "chat_id": user.get("telegram_chat_id"),
+    }
+
+
+@api.post("/telegram/link/code", response_model=TgLinkResponse)
+async def telegram_link_code(user: dict = Depends(get_current_user)):
+    """Generate a one-time linking code the user pastes into Telegram via /start."""
+    if not _tg_configured():
+        raise HTTPException(status_code=503, detail="Telegram bot is not configured on the server.")
+    # 6-char code, upper-case alphanumerics
+    code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+    # Invalidate any pre-existing codes for this user.
+    await db.telegram_link_codes.delete_many({"user_id": user["user_id"]})
+    await db.telegram_link_codes.insert_one({
+        "code": code, "user_id": user["user_id"], "expires_at": expires_at, "created_at": now_iso(),
+    })
+    # Fetch bot username (cached in a class var to save API calls).
+    global _TG_BOT_USERNAME
+    if not globals().get("_TG_BOT_USERNAME"):
+        me = await tg_api("getMe", {})
+        _TG_BOT_USERNAME = (me.get("result") or {}).get("username", "")
+    bot_username = globals().get("_TG_BOT_USERNAME") or ""
+    deep_link = f"https://t.me/{bot_username}?start={code}" if bot_username else None
+    return TgLinkResponse(code=code, bot_username=bot_username or None, deep_link=deep_link)
+
+
+@api.post("/telegram/link/unlink")
+async def telegram_unlink(user: dict = Depends(get_current_user)):
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$unset": {"telegram_chat_id": "", "telegram_username": ""}},
+    )
+    await db.telegram_link_codes.delete_many({"user_id": user["user_id"]})
+    await db.telegram_sessions.delete_many({"user_id": user["user_id"]})
+    return {"unlinked": True}
+
+
+# ---- webhook + intake helpers ------------------------------------------------
+
+WELCOME_LINKED = (
+    "✅ Telegram linked to Karya for <b>{name}</b>.\n\n"
+    "You can now message me naturally. Try:\n"
+    "• <i>“Ramesh took an advance of {amt}”</i>\n"
+    "• <i>“Pay Manoj {pay}”</i>\n"
+    "• <i>“10 workers arrived at Skyline Tower today”</i>\n"
+    "• Send a <b>voice note</b> and I'll transcribe + act on it.\n"
+    "• Send a <b>photo</b> and I'll attach it to today's daily report.\n"
+    "• Send a <b>PDF</b> (permit, license, notice) and I'll add it to your compliance register.\n\n"
+    "Type /help any time. /unlink to disconnect."
+)
+
+WELCOME_UNLINKED = (
+    "👷 <b>Welcome to Karya Assistant.</b>\n\n"
+    "Please link this chat to your Karya account first.\n\n"
+    "Steps:\n"
+    "1. Open Karya → Profile → <b>Connect Telegram</b>\n"
+    "2. Copy the 6-character code shown\n"
+    "3. Return here and send: <code>/start ABCDEF</code>\n\n"
+    "That code is valid for 15 minutes."
+)
+
+
+async def _handle_tg_start(chat_id: int, from_user: dict, arg: str):
+    if not arg:
+        await tg_send(chat_id, WELCOME_UNLINKED)
+        return
+    code = arg.strip().upper()
+    entry = await db.telegram_link_codes.find_one({"code": code})
+    if not entry:
+        await tg_send(chat_id, "⚠️ That linking code isn't valid. Please generate a fresh one from Karya → Profile → Connect Telegram.")
+        return
+    try:
+        exp = datetime.fromisoformat(entry["expires_at"])
+        if exp < datetime.now(timezone.utc):
+            await db.telegram_link_codes.delete_one({"code": code})
+            await tg_send(chat_id, "⚠️ That code has expired. Please generate a new one.")
+            return
+    except Exception:
+        pass
+    user = await db.users.find_one({"user_id": entry["user_id"]}, {"_id": 0})
+    if not user:
+        await tg_send(chat_id, "⚠️ That Karya account no longer exists.")
+        return
+    # Detach this chat from any prior user, then link to the new one.
+    await db.users.update_many({"telegram_chat_id": chat_id}, {"$unset": {"telegram_chat_id": "", "telegram_username": ""}})
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"telegram_chat_id": chat_id, "telegram_username": from_user.get("username", "") or ""}},
+    )
+    await db.telegram_link_codes.delete_one({"code": code})
+    ctx = country_ctx(user)
+    amt = "AED 500" if ctx["currency_code"] == "AED" else "₹5000"
+    pay = "AED 1200" if ctx["currency_code"] == "AED" else "₹12000"
+    await tg_send(chat_id, WELCOME_LINKED.format(name=user.get("name", "you"), amt=amt, pay=pay))
+
+
+async def _tg_user_for_chat(chat_id: int) -> Optional[dict]:
+    return await db.users.find_one({"telegram_chat_id": chat_id}, {"_id": 0})
+
+
+async def _handle_tg_text(chat_id: int, text: str, user: dict):
+    """Route a plain-text message from a linked user through the shared command executor."""
+    if not text:
+        return
+    result = await _execute_command(text, user)
+    summary = result.get("summary") or ("Done." if result.get("applied") else "Couldn't apply that.")
+    icon = "✅" if result.get("applied") else "🤔"
+    await tg_send(chat_id, f"{icon} {summary}")
+
+
+async def _handle_tg_voice(chat_id: int, file_id: str, user: dict):
+    dl = await tg_get_file_bytes(file_id)
+    if not dl:
+        await tg_send(chat_id, "⚠️ Couldn't download that voice note.")
+        return
+    data, filename = dl
+    # Transcribe using existing Whisper pipeline.
+    try:
+        buf = io.BytesIO(data)
+        buf.name = filename or "voice.ogg"
+        stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
+        resp = await stt.transcribe(file=buf, model="whisper-1", response_format="json")
+        transcript = (resp.text or "").strip()
+    except Exception as e:
+        logger.warning(f"tg voice transcribe failed: {e}")
+        await tg_send(chat_id, "⚠️ Couldn't transcribe the voice note. Please try again or type the command.")
+        return
+    if not transcript:
+        await tg_send(chat_id, "🎙️ I couldn't hear anything in that recording.")
+        return
+    await tg_send(chat_id, f"🎙️ <i>Heard:</i> {transcript}")
+    await _handle_tg_text(chat_id, transcript, user)
+
+
+async def _handle_tg_photo(chat_id: int, file_id: str, caption: str, user: dict):
+    """Photos become an attachment on today's draft daily report."""
+    dl = await tg_get_file_bytes(file_id)
+    if not dl:
+        await tg_send(chat_id, "⚠️ Couldn't download the photo.")
+        return
+    data, filename = dl
+    if not filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        filename = (filename or "photo") + ".jpg"
+    # Reuse the object-storage upload pipeline.
+    try:
+        ext = filename.rsplit(".", 1)[-1].lower() or "jpg"
+        path = f"{APP_NAME}/telegram/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+        stored = await asyncio.to_thread(put_object, path, data, "image/jpeg")
+    except Exception as e:
+        logger.warning(f"tg photo storage failed: {e}")
+        await tg_send(chat_id, "⚠️ Couldn't save the photo. Please retry.")
+        return
+    attachment = {
+        "id": new_id(), "filename": filename, "content_type": "image/jpeg",
+        "size": len(data), "path": stored["path"], "url": None,
+        "extracted_text": "", "uploaded_at": now_iso(), "source": "telegram",
+        "caption": caption or "",
+    }
+    # Append to today's WIP report bucket (a per-user staging record).
+    today = today_str()
+    await db.telegram_wip.update_one(
+        {"user_id": user["user_id"], "date": today},
+        {"$push": {"photos": attachment}, "$setOnInsert": {"created_at": now_iso(), "notes": ""}, "$set": {"updated_at": now_iso()}},
+        upsert=True,
+    )
+    if caption:
+        await db.telegram_wip.update_one(
+            {"user_id": user["user_id"], "date": today},
+            {"$set": {"last_caption": caption}},
+        )
+    wip = await db.telegram_wip.find_one({"user_id": user["user_id"], "date": today}, {"_id": 0})
+    n = len(wip.get("photos", [])) if wip else 1
+    msg = (
+        f"📸 Photo saved to today's report draft ({n} attached).\n"
+        "Send more photos, notes, or /report to generate the daily report."
+    )
+    await tg_send(chat_id, msg)
+
+
+async def _handle_tg_document(chat_id: int, file_id: str, filename: str, mime: str, user: dict):
+    dl = await tg_get_file_bytes(file_id)
+    if not dl:
+        await tg_send(chat_id, "⚠️ Couldn't download the document.")
+        return
+    data, downloaded_name = dl
+    filename = filename or downloaded_name or "document"
+    is_image = mime.startswith("image/") if mime else filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
+    is_pdf = "pdf" in mime.lower() if mime else filename.lower().endswith(".pdf")
+    if is_image:
+        # Route images uploaded as documents through the photo pipeline.
+        await _handle_tg_photo(chat_id, file_id, "", user)
+        return
+    if not is_pdf:
+        await tg_send(chat_id, "📎 Received. I can currently process photos and PDFs — text documents will land as raw attachments on your next compliance item.")
+    try:
+        ext = (filename.rsplit(".", 1)[-1] if "." in filename else "pdf").lower()
+        path = f"{APP_NAME}/telegram/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+        stored = await asyncio.to_thread(put_object, path, data, mime or "application/pdf")
+    except Exception as e:
+        logger.warning(f"tg doc storage failed: {e}")
+        await tg_send(chat_id, "⚠️ Couldn't save the document.")
+        return
+    text = ""
+    try:
+        text = extract_text(data, mime or "", filename)
+    except Exception:
+        pass
+    # Create a compliance item automatically.
+    title = filename.rsplit(".", 1)[0][:120] or "Uploaded compliance document"
+    item = {
+        "id": new_id(), "owner_id": user["user_id"], "title": title, "category": "permit",
+        "due_date": "", "expiry_date": "", "project_ids": [], "status": "pending",
+        "document_text": (text or "")[:8000],
+        "attachments": [{
+            "id": new_id(), "filename": filename, "content_type": mime or "application/pdf",
+            "size": len(data), "path": stored["path"], "url": None,
+            "extracted_text": text[:800] if text else "", "uploaded_at": now_iso(), "source": "telegram",
+        }],
+        "analysis": None, "renewal_plan": None, "penalty_estimate": None,
+        "history": [{"action": "uploaded_via_telegram", "at": now_iso(), "note": filename}],
+        "created_at": now_iso(),
+    }
+    await db.compliance.insert_one({**item})
+    await tg_send(
+        chat_id,
+        f"📄 <b>{title}</b> added to your compliance register. Running AI analysis…",
+    )
+    # Analyze in the background.
+    try:
+        ctx = country_ctx(user)
+        analysis = await ai_json(
+            COMPLIANCE_SYSTEM.format(country_context=ctx["context_prompt"]),
+            f"Title: {title}\nCategory: permit\nDocument text:\n{(text or '')[:5000]}",
+        )
+        patch: Dict[str, Any] = {"analysis": analysis}
+        if analysis and analysis.get("expiry_date"):
+            patch["expiry_date"] = analysis["expiry_date"]
+            patch["due_date"] = analysis["expiry_date"]
+        await db.compliance.update_one({"id": item["id"]}, {"$set": patch, "$push": {"history": {"action": "analyzed", "at": now_iso(), "note": ""}}})
+        summary_line = (analysis or {}).get("summary") or "Analysis complete — open Karya to review."
+        risk = (analysis or {}).get("risk_level") or ""
+        expiry_hint = f"\n🗓 <b>Expiry:</b> {analysis.get('expiry_date')}" if (analysis and analysis.get("expiry_date")) else ""
+        await tg_send(chat_id, f"🧠 <b>{title}</b>{expiry_hint}\n<b>Risk:</b> {risk}\n{summary_line[:600]}")
+    except Exception as e:
+        logger.warning(f"tg document analysis failed: {e}")
+        await tg_send(chat_id, "⚠️ Analysis failed but the document is saved. Open Karya → Compliance to review manually.")
+
+
+async def _handle_tg_report_command(chat_id: int, user: dict):
+    """Assemble today's WIP into an actual daily report via the existing generator."""
+    today = today_str()
+    wip = await db.telegram_wip.find_one({"user_id": user["user_id"], "date": today}, {"_id": 0})
+    if not wip or (not wip.get("photos") and not wip.get("notes")):
+        await tg_send(chat_id, "📝 Nothing in today's draft yet. Send photos or a short voice note describing progress, then /report.")
+        return
+    # Guess the project: use user's most recent one if any.
+    project = await db.projects.find_one({"owner_id": user["user_id"]}, sort=[("created_at", -1)])
+    project_id = project["id"] if project else None
+    project_name = project["name"] if project else ""
+    ctx = country_ctx(user)
+    # Assemble via a compact inline prompt (skip routes/reports internals to keep this decoupled).
+    sys_prompt = (
+        "You write a daily site report for a construction contractor. "
+        f"{ctx['context_prompt']} "
+        "Given field notes + photos, output JSON with keys: title, summary, weather, work_completed[], manpower, materials_used[], issues_delays[], safety_observations[], next_steps[]."
+    )
+    notes_text = wip.get("notes") or ""
+    if wip.get("last_caption"):
+        notes_text = (notes_text + "\n" + wip["last_caption"]).strip()
+    prompt = f"Project: {project_name}\nDate: {today}\nField notes: {notes_text or '(only photos provided)'}\nPhoto count: {len(wip.get('photos') or [])}"
+    try:
+        content = await ai_json(sys_prompt, prompt)
+    except Exception:
+        content = {"title": f"Daily Report — {project_name or 'Site'}", "summary": notes_text or "Photos attached, no text notes.", "work_completed": [], "manpower": "", "materials_used": [], "issues_delays": [], "safety_observations": [], "next_steps": []}
+    rec = {
+        "id": new_id(), "owner_id": user["user_id"], "project_id": project_id, "project_name": project_name,
+        "report_date": today, "location": (project or {}).get("location", ""),
+        "notes_text": notes_text, "photos": wip.get("photos") or [], "documents": [],
+        "content": content, "sent_to": [], "created_at": now_iso(), "source": "telegram",
+    }
+    await db.daily_reports.insert_one({**rec})
+    await db.telegram_wip.delete_one({"user_id": user["user_id"], "date": today})
+    title = content.get("title") or "Daily Report"
+    summary_line = (content.get("summary") or "")[:600]
+    await tg_send(
+        chat_id,
+        f"📋 <b>{title}</b>\n{summary_line}\n\nOpen Karya → Daily Reports to export as PDF/Word/Excel or send on WhatsApp.",
+    )
+
+
+@api.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """Telegram calls this endpoint for every update. Auth via the secret header."""
+    if not _tg_configured():
+        return {"ok": True}  # Silently accept if not configured.
+    if TELEGRAM_WEBHOOK_SECRET:
+        provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if provided != TELEGRAM_WEBHOOK_SECRET:
+            raise HTTPException(status_code=403, detail="Invalid webhook secret")
+    try:
+        update = await request.json()
+    except Exception:
+        return {"ok": True}
+    msg = update.get("message") or update.get("edited_message") or {}
+    if not msg:
+        return {"ok": True}
+    chat = msg.get("chat") or {}
+    chat_id = chat.get("id")
+    from_user = msg.get("from") or {}
+    text = (msg.get("text") or "").strip()
+    caption = (msg.get("caption") or "").strip()
+    if not chat_id:
+        return {"ok": True}
+
+    # /start handles linking (works even when unlinked).
+    if text.startswith("/start"):
+        parts = text.split(maxsplit=1)
+        arg = parts[1] if len(parts) > 1 else ""
+        await _handle_tg_start(chat_id, from_user, arg)
+        return {"ok": True}
+
+    user = await _tg_user_for_chat(chat_id)
+    if not user:
+        await tg_send(chat_id, WELCOME_UNLINKED)
+        return {"ok": True}
+
+    if text.startswith("/help"):
+        ctx = country_ctx(user)
+        amt = "AED 500" if ctx["currency_code"] == "AED" else "₹5000"
+        await tg_send(
+            chat_id,
+            WELCOME_LINKED.format(name=user.get("name", "you"), amt=amt, pay="AED 1200" if ctx["currency_code"] == "AED" else "₹12000"),
+        )
+        return {"ok": True}
+    if text.startswith("/unlink"):
+        await db.users.update_one({"user_id": user["user_id"]}, {"$unset": {"telegram_chat_id": "", "telegram_username": ""}})
+        await db.telegram_sessions.delete_many({"user_id": user["user_id"]})
+        await tg_send(chat_id, "🔌 Unlinked. Message /start again with a new code to reconnect.")
+        return {"ok": True}
+    if text.startswith("/report"):
+        await _handle_tg_report_command(chat_id, user)
+        return {"ok": True}
+
+    # Media handling.
+    if msg.get("voice") or msg.get("audio"):
+        v = msg.get("voice") or msg.get("audio") or {}
+        await _handle_tg_voice(chat_id, v.get("file_id"), user)
+        return {"ok": True}
+    if msg.get("photo"):
+        # Largest photo variant is last in the array.
+        biggest = msg["photo"][-1]
+        await _handle_tg_photo(chat_id, biggest.get("file_id"), caption, user)
+        return {"ok": True}
+    if msg.get("document"):
+        doc = msg["document"]
+        await _handle_tg_document(chat_id, doc.get("file_id"), doc.get("file_name", ""), doc.get("mime_type", ""), user)
+        return {"ok": True}
+
+    if text:
+        await _handle_tg_text(chat_id, text, user)
+    return {"ok": True}
+
+
+@api.post("/telegram/register-webhook")
+async def telegram_register_webhook(user: dict = Depends(get_current_user)):
+    """Call once (from Profile page) to register this preview/production URL with Telegram."""
+    if not _tg_configured():
+        raise HTTPException(status_code=503, detail="Telegram bot is not configured.")
+    public_url = os.environ.get("BACKEND_PUBLIC_URL", "").rstrip("/")
+    if not public_url:
+        raise HTTPException(status_code=500, detail="BACKEND_PUBLIC_URL is not set.")
+    webhook_url = f"{public_url}/api/telegram/webhook"
+    payload = {
+        "url": webhook_url,
+        "secret_token": TELEGRAM_WEBHOOK_SECRET,
+        "allowed_updates": ["message", "edited_message"],
+        "drop_pending_updates": False,
+    }
+    r = await tg_api("setWebhook", payload)
+    if not r.get("ok"):
+        raise HTTPException(status_code=502, detail=f"Telegram rejected setWebhook: {r}")
+    return {"ok": True, "webhook_url": webhook_url, "description": r.get("description")}
+
 
 # ---------------------------------------------------------------- compliance
 
