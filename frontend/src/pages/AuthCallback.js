@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import api from "@/lib/api";
+import api, { setToken } from "@/lib/api";
 
 // Module-scoped guard: survives React StrictMode double-mount so we
 // never POST the one-time session_id to the backend more than once.
@@ -18,15 +18,15 @@ export default function AuthCallback() {
     }
     (async () => {
       try {
-        await api.post("/auth/session", { session_id: sessionId });
-        // Hard redirect so cookie-based /auth/me runs on a clean URL (no hash),
-        // avoiding router timing issues between setUser + navigate.
+        const res = await api.post("/auth/session", { session_id: sessionId });
+        if (res.data?.session_token) setToken(res.data.session_token);
+        // Hard redirect so /auth/me runs on a clean URL (no hash), with the new
+        // Bearer token already in localStorage.
         window.location.replace("/dashboard");
       } catch (e) {
-        // Surface the backend detail so we can see the real reason in devtools.
         // eslint-disable-next-line no-console
         console.error("[AuthCallback] session exchange failed:", e?.response?.status, e?.response?.data);
-        window.location.replace("/?auth_error=" + encodeURIComponent(e?.response?.data?.detail || "unknown"));
+        window.location.replace("/?auth_error=" + encodeURIComponent(e?.response?.data?.detail || e?.message || "unknown"));
       }
     })();
   }, []);

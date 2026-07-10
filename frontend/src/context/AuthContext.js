@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import api from "@/lib/api";
+import api, { getToken, setToken } from "@/lib/api";
 
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
@@ -9,10 +9,16 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   const checkAuth = useCallback(async () => {
+    if (!getToken()) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
     try {
       const res = await api.get("/auth/me");
       setUser(res.data);
     } catch {
+      setToken(null);
       setUser(null);
     } finally {
       setLoading(false);
@@ -21,7 +27,7 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     // CRITICAL: If returning from OAuth callback, skip the /me check.
-    // AuthCallback will exchange the session_id and establish the session first.
+    // AuthCallback will exchange the session_id and set the token first.
     if (window.location.hash?.includes("session_id=")) {
       setLoading(false);
       return;
@@ -31,6 +37,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch {}
+    setToken(null);
     setUser(null);
     window.location.href = "/";
   };

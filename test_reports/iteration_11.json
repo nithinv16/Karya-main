@@ -1,0 +1,20 @@
+{
+  "summary": "Verified switch from cookie auth to Bearer/localStorage auth. Backend /api/auth/session returns session_token in body; /api/auth/me and /api/auth/logout accept Bearer. Frontend axios interceptor attaches Authorization: Bearer <token> from localStorage on every request (no withCredentials). AuthCallback stores token from response and hard-redirects to /dashboard. Cross-origin regression confirmed: CDN rewrites Access-Control-Allow-Origin to '*' — Bearer works because credentials are not required. Exactly 1 POST /api/auth/session under StrictMode.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/test_reports/iteration_11.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is ~1200 lines — should be split into routers (auth, workers, subcontractors, reports, insights, feed) for maintainability.",
+    "GET /api/files/{path} accepts token via ?auth=<token> query param to allow <img> src auth — token in URL may leak into server logs / referer headers. Consider signed short-lived URLs for image access.",
+    "CORS: env allow_origins defaults to '*' AND allow_credentials=True — FastAPI silently ignores allow_credentials with wildcard, but Emergent ingress rewrites the response header to '*' anyway. Since we no longer rely on cookies cross-origin, this is acceptable; keep the allow_origin_regex for same-origin cookie path (still set for backward compat)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test_session_karya1 (Bearer, localStorage key karya_session_token) — /app/memory/test_credentials.md",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Bearer-auth switch validated end-to-end. Key evidence: (1) curl POST /api/auth/session with bogus id → 401 detail='emergent_404: {...}'; (2) curl GET /api/auth/me -H 'Authorization: Bearer test_session_karya1' → 200 with user body; (3) Playwright: no-token visit / shows google-login-button, /dashboard redirects to /; (4) LS-token visit / auto-redirects to /dashboard which renders Command Center, Authorization: Bearer test_session_karya1 header present on /api/auth/me; (5) mocked /api/auth/session in AuthCallback stores session_token in LS, dashboard renders, exactly 1 POST under StrictMode; (6) cross-origin curl with Origin: https://compliance-nexus-21.preview.emergentagent.com + Bearer → 200 (ACAO header comes back as '*' from CDN but that's fine without credentials).",
+  "rca of the issue": "Root cause was that Emergent's ingress/CDN rewrites Access-Control-Allow-Origin to '*' regardless of what FastAPI sets. Browsers reject credentialed (withCredentials/cookies) responses when ACAO='*'. Fix: frontend now sends Authorization: Bearer <token> from localStorage and no longer sets withCredentials; backend already supported Bearer via Authorization header on /auth/me and now on /auth/logout too. Cookie path retained for same-origin fallback."
+}

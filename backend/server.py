@@ -202,7 +202,10 @@ async def create_session(body: SessionIn, response: Response):
         "created_at": now_iso(),
     })
     response.set_cookie("session_token", token, httponly=True, secure=True, samesite="none", path="/", max_age=7 * 24 * 3600)
-    return user
+    # Also return the token in the body so the frontend can use Authorization: Bearer
+    # (needed when the frontend is on a different Emergent preview origin — the
+    # platform ingress rewrites CORS to `*` which blocks credentialed cookies).
+    return {**user, "session_token": token}
 
 @api.get("/auth/me")
 async def auth_me(user: dict = Depends(get_current_user)):
@@ -211,6 +214,10 @@ async def auth_me(user: dict = Depends(get_current_user)):
 @api.post("/auth/logout")
 async def logout(request: Request, response: Response):
     token = request.cookies.get("session_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
     if token:
         await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/", secure=True, samesite="none")
@@ -1176,6 +1183,7 @@ app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",")],
+    allow_origin_regex=r"https://[a-z0-9-]+\.(preview\.emergentagent\.com|emergent\.host|emergent\.sh)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

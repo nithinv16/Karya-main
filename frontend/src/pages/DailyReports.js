@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import api, { API } from "@/lib/api";
+import api, { API, getToken } from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { FileUpload } from "@/components/FileUpload";
 import VoiceButton from "@/components/VoiceButton";
@@ -87,7 +87,7 @@ export default function DailyReports() {
             {form.photos.length > 0 && (
               <div className="grid grid-cols-3 gap-2" data-testid="report-photo-grid">
                 {form.photos.map((f) => (
-                  <img key={f.id} src={`${API}/files/${f.path}`} alt={f.filename} className="w-full h-16 object-cover border border-[#E4E4E7]" />
+                  <img key={f.id} src={`${API}/files/${f.path}?auth=${encodeURIComponent(getToken() || "")}`} alt={f.filename} className="w-full h-16 object-cover border border-[#E4E4E7]" />
                 ))}
               </div>
             )}
@@ -147,8 +147,8 @@ export default function DailyReports() {
                 <Section icon={Camera} title="Site Photos">
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {active.photos.map((f) => (
-                      <a key={f.id} href={`${API}/files/${f.path}`} target="_blank" rel="noreferrer">
-                        <img src={`${API}/files/${f.path}`} alt={f.filename} className="w-full h-28 object-cover border border-[#E4E4E7] hover:border-[#EA580C]" />
+                      <a key={f.id} href={`${API}/files/${f.path}?auth=${encodeURIComponent(getToken() || "")}`} target="_blank" rel="noreferrer">
+                        <img src={`${API}/files/${f.path}?auth=${encodeURIComponent(getToken() || "")}`} alt={f.filename} className="w-full h-28 object-cover border border-[#E4E4E7] hover:border-[#EA580C]" />
                       </a>
                     ))}
                   </div>
