@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration-6 (live-data-only + regulation->compliance tracking) verified end-to-end. Backend 10/10 pytest tests pass against the public ingress: POST /api/seed/demo -> 404 and POST /api/feed/scan -> 405 (both removed). POST /api/feed/fetch pulls real Google News India entries across the 10 official-oriented RSS_SOURCES (CBIC/GST, CPWD/state-PWD/eProcurement tenders, BOCW labour, NBC safety, municipal bylaws, environment/C&D dust); each persisted item has verified=true, ai_generated=false, https url, source publisher (India Briefing, Taxscan, SCC Online, The Times of India, taxo.online, etc.), category in {labour,gst,safety,municipal,tender,environment}, and published_date. Second fetch adds no items with duplicate urls. GET /api/feed is sorted desc by published_date. POST /api/feed/{id}/impact returns the feed item with .impact{affected,urgency in low|medium|high, impact_summary, affected_projects[], recommended_actions[], deadline}. POST /api/feed/{id}/track creates a Compliance item with title carried over, mapped category (e.g. labour->registration, safety->safety, tender->tender), document_text containing the source URL + impact summary, analysis carried over, and the new id appears in GET /api/compliance. GET /api/insights returns predictions.{labour_shortage,cost_overrun,delay_risk} (each with level/detail/metric), project_overrun[], subcontractor_scorecards[] on an empty workspace without error. GET /api/insights/briefing returns {ai_summary} (string or null). NL command bar still works after creating a worker via POST /api/workers (parses 'TEST_Rajesh worked 5 days'). Frontend (auth via injected session_token cookie): Dashboard empty state shows 'Set up your workspace' with empty-add-workforce (orange 'Add projects & workers' -> /workforce) and empty-fetch-feed ('Live regulation feed' -> /feed); NO 'Load demo data' button anywhere. /feed has a single primary fetch-feed-button (' Fetch live updates') and NO 'AI draft scan' button; 32 'Verified source' badges + 32 feed-source-{id} anchors (all https) rendered; clicking analyze-feed-{id} populated impact-{id} with low-urgency badge + 4 recommended actions; the 'Track in Compliance' button appeared and clicking it showed an 'Added to Compliance tracker' toast. /workforce, /subcontractors, /compliance, /insights no longer mention 'demo data'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/feed/fetch", "issue": "Source links resolve to news.google.com/rss/articles/... (Google News redirect URLs) rather than the publisher's direct domain. Functionally valid (browser follows the redirect to the official issuer), but a user expecting cbic.gov.in / cpwd.gov.in in the address bar will see news.google.com first. Optional: resolve the redirect server-side or expose source publisher domain in the UI (already done — 'India Briefing', 'Taxscan', 'The Times of India' shown next to each item)."},
+      {"endpoint": "POST /api/feed/{id}/impact", "issue": "Latency 30-90s per item because LLM call is awaited inline; consider returning 202 + polling or websocket for impact analyses on the UI."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6_features.py",
+    "/app/test_reports/pytest/pytest_iteration6.xml"
+  ],
+  "action_items": [
+    "(Optional / UX) Consider resolving Google News redirect URLs to the publisher's direct URL on the server before persisting feed.url, so the 'Read original source' link goes straight to cbic.gov.in / pib.gov.in / cpwd.gov.in / timesofindia / taxscan instead of through news.google.com. Functionality is unaffected; this is a polish item.",
+    "(Optional / Perf) The /feed/{id}/impact LLM round-trip blocks the UI for 30-90s. Consider showing a skeleton state on the card while analyzing and/or making this async with polling."
+  ],
+  "critical_code_review_comments": [
+    "RSS_SOURCES correctly expanded to 10 official-oriented Google News queries (CBIC/GST x2, CPWD/state-PWD/eProcurement x3, BOCW labour x2, NBC safety, municipal bylaws, environment). feed_fetch caps at top-3 entries per source = up to 30 items per call, dedups on url against db.reg_feed before insert, runs feedparser inside asyncio.to_thread so the event loop is not blocked.",
+    "track_feed_as_compliance correctly maps category via CAT_TO_COMPLIANCE (gst/labour/environment -> registration, safety -> safety, tender -> tender, municipal -> permit), parses YYYY-MM-DD from impact.deadline, and carries over analysis {summary, actions_required, risk_level} from the feed impact. document_text always embeds the original Source URL — good audit trail.",
+    "Both /api/seed/demo and /api/feed/scan endpoints are physically removed from server.py — FastAPI returns 404/405, matching the product requirement of 'live data only'.",
+    "get /api/insights is resilient on an empty workspace: nworkers=max(len(workers),1) avoids divide-by-zero; absenteeism clamped to [0,100]; project_overrun & subcontractor_scorecards safely empty.",
+    "Frontend BureaucracyFeed.js shows the green 'Verified source' badge + 'Read original source' link on every item; the empty Dashboard now correctly directs users to the live regulation feed instead of a demo button.",
+    "Code quality: server.py is 1310 lines — borderline. Consider splitting into modules (auth.py, feed.py, insights.py, command.py, files.py, voice.py) for maintainability. Not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6_features.py"
+  ],
+  "success_rate": {"backend": "100% (10/10 pytest tests passed)", "frontend": "100% of iteration-6 flows verified (empty-state CTAs, no demo button, fetch live updates, verified badges + source links, analyze impact, track-in-compliance toast, no 'demo data' copy)"},
+  "test_credentials": "Emergent OAuth test session — user_id=user_testdemo01, session_token=test_session_demo_001 (Bearer header or session_token cookie). DB: test_database. See /app/auth_testing.md.",
+  "seed_data_creation": "Created and cleaned up TEST_Rajesh worker via POST /api/workers + DELETE during the NL-command regression test. Live RSS fetch added new items as a side-effect of /api/feed/fetch (intentional, also confirms dedup on rerun). Workspace remains free of any demo/sample data — only the live feed items + the 1 compliance item created by /feed/{id}/track persist.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest /app/backend/tests/test_iteration6_features.py -n 0 -v --tb=short --junitxml=/app/test_reports/pytest/pytest_iteration6.xml`. The /feed/fetch step is network-dependent on Google News RSS (~20-30s), and /feed/{id}/impact + /insights/briefing block on EMERGENT_LLM_KEY (30-90s); fixtures use timeout=60/120 accordingly. For frontend, inject the session_token cookie BEFORE navigating to /dashboard, /feed, /workforce, /subcontractors, /compliance, /insights. The 'Read original source' URLs point to news.google.com redirects — this is intentional/by-design but flagged as a possible polish item.",
+  "rca of the issue": "n/a — all iteration-6 requirements satisfied. (A) 10 official-oriented RSS connectors live (CBIC/GST, CPWD/PWD/eProcurement, BOCW, NBC safety, municipal, environment). (B) /seed/demo + /feed/scan endpoints physically removed; UI scrubbed of 'demo data' copy and the Load-demo CTA. (C) New POST /feed/{id}/track creates a Compliance item with category mapping, deadline parsing, and analysis carry-over; UI shows a 'Track in Compliance' button after analyze-impact and a success toast on click."
+}

@@ -1,0 +1,92 @@
+{
+  "domain": "Construction SaaS / AI-native OS",
+  "theme": "light",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "emotional_tone": "Authoritative, functional, industrial, objective",
+  "colors": {
+    "background_primary": "#FFFFFF",
+    "background_secondary": "#F4F4F5",
+    "surface": "#FFFFFF",
+    "text_primary": "#09090B",
+    "text_secondary": "#71717A",
+    "accent_primary": "#EA580C",
+    "accent_hover": "#C2410C",
+    "border": "#E4E4E7",
+    "status_success": "#16A34A",
+    "status_warning": "#EAB308",
+    "status_critical": "#DC2626"
+  },
+  "typography": {
+    "headings": {
+      "family": "Cabinet Grotesk",
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter leading-none",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight leading-tight",
+      "h3": "text-xl sm:text-2xl font-bold tracking-tight",
+      "h4": "text-lg font-semibold tracking-tight"
+    },
+    "body": {
+      "family": "IBM Plex Sans",
+      "base": "text-base font-normal leading-relaxed tracking-normal",
+      "sm": "text-sm font-medium",
+      "xs": "text-xs font-semibold"
+    },
+    "labels_overlines": "text-xs uppercase tracking-[0.2em] font-bold text-slate-500"
+  },
+  "spacing_and_layout": {
+    "general": "Generous internal padding for containers (p-6, p-8) to avoid text collision with borders. Left-align dense content.",
+    "grid_strategy": "MODE B: THE 'CONTROL ROOM' GRID. Tight gaps (gap-4 or gap-6). Widget span logic: Summary (col-span-1), Main Chart (col-span-2 or 3), Feed (col-span-1 row-span-2). Use full height stretch (h-full).",
+    "border_radius": "Sharp edges (rounded-none or max rounded-sm) to emphasize the brutalist/technical construction environment.",
+    "shadows": "Avoid soft/blurry shadows. Use 1px solid borders (border-border) or sharp solid offset shadows."
+  },
+  "surface_strategies": {
+    "cards": "Grid Borders (Technical Look). Expose the skeleton using border-collapse style layouts with subtle borders on right and bottom. Flat white backgrounds.",
+    "header": "Solid background with a stark bottom border. fixed z-50. No glassmorphism.",
+    "command_bar": "Terminal Variant: Prominent, stark, 2px solid border with high-contrast focus state."
+  },
+  "components": {
+    "buttons": "Flat, rectangular, solid colors. Active states must change background and text color (e.g., hover:bg-orange-700 hover:text-white). Focus: ring-2 ring-offset-2 ring-orange-500.",
+    "tables": "Shadcn-based, but dense spacing. text-sm. Explicit color changes on row hover.",
+    "ai_assistant": "Side panel or bottom-right floating widget. Distinct background (e.g., #FAFAFA) with sharp borders. Messages have square corners.",
+    "badges": "Sharp corners (rounded-none). High contrast text."
+  },
+  "motion_and_interactions": {
+    "hover": "Explicit text color setting on hover. Subtle -translate-y-px on interactive cards.",
+    "transitions": "Specific transitions like transition-colors duration-200 ease-in-out. Do not use transition-all.",
+    "data_testid_rule": "All interactive and key informational elements MUST include a kebab-case role-based data-testid attribute."
+  },
+  "icons": {
+    "library": "Phosphor Icons",
+    "installation": "yarn add @phosphor-icons/react",
+    "usage": "Use duotone or bold weights for robust visibility in industrial environments."
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.pexels.com/photos/4170184/pexels-photo-4170184.jpeg",
+        "category": "background_hero",
+        "description": "Aerial view of an active construction site. Use as login background or header banner with heavy black/white overlay."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1577199001468-44c049e7603f",
+        "category": "team_workforce",
+        "description": "Indian construction workers in safety gear. Use in the Workforce Intelligence dashboard, profile placeholders, or SOP examples."
+      },
+      {
+        "url": "https://images.pexels.com/photos/26576975/pexels-photo-26576975.jpeg",
+        "category": "brand_logo",
+        "description": "Minimalist logo placeholder for the company brand."
+      }
+    ],
+    "image_overlays": "Max overlay opacity: bg-black/50 for dark theme aspects, bg-white/40 for light theme. Never completely obscure the image."
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the 'Control Room' grid layout for the Project Intelligence dashboards. Ensure all charts and widgets stretch to match neighbors.",
+    "Implement the 'Natural-language AI Command Bar' as a prominent sticky or fixed element, accessible from any page, using a technical/terminal aesthetic.",
+    "Use Cabinet Grotesk for all dashboard section headings and IBM Plex Sans for tables, data, and body.",
+    "Apply 'Grid Borders' surface strategy: avoid standard card components with soft shadows; instead, use flat containers separated by stark 1px borders.",
+    "Ensure the Multi-rate Payroll & Settlements ledger uses dense table layouts with clear typography (IBM Plex Sans) to ensure numbers align properly.",
+    "All interactive elements (buttons, inputs, menu items, table rows) MUST have a data-testid attribute for automated testing.",
+    "Implement Shadcn UI heavily but strip the Vercel look by removing rounded corners and adding hard borders.",
+    "Write all React components as .js files, not .tsx. Avoid TypeScript typings in component definitions."
+  ]
+}

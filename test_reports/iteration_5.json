@@ -1,0 +1,46 @@
+{
+  "summary": "Verified iteration-5 features (notifications enrichment, verified RSS feed fetch, Predictive Insights, KARYA rename) end-to-end. Backend: 12/12 pytest tests pass against the public ingress: /api/notifications returns mixed type notifications {compliance->/compliance, regulation->/feed (when any feed item has impact.urgency==high), onboarding->/workforce (insurance=critical, docs=warning)} each with key/type/severity/title/message/link/dismissed; dismiss endpoint reduces unread by 1 and marks dismissed=true. POST /api/feed/fetch pulls real Google News India RSS entries (verified=true, ai_generated=false, non-empty url, source, category, published_date) and dedups on url on the second call. POST /api/feed/scan still produces AI items (ai_generated=true, verified=false). POST /api/feed/{id}/impact returns the feed item with .impact dict containing urgency in (low|medium|high). GET /api/insights returns predictions{labour_shortage,cost_overrun,delay_risk} each with level/detail/metric, project_overrun[], subcontractor_scorecards[] sorted desc by score with rating A/B/C, and ai_summary string; 401 without token. Frontend: Login screen + sidebar both show 'KARYA' (no 'Clerkworks'). Browser tab title is 'Karya — AI OS for Construction' AFTER a frontend supervisor restart (CRA dev-server cached an old title until restart; not a code bug). Notification bell shows count 7, panel lists 7 items including both 'High-impact regulation' entries (e.g. PIB/Times of India dust-control + Noida safety), 'Workers without insurance / WC cover' (critical), 'Incomplete worker onboarding' (warning), 2 compliance deadlines and one warning compliance. View on a regulation item navigates to /feed; View on an onboarding item navigates to /workforce; Dismiss reduces both visible items (7->6) and badge (7->6). /feed page renders 22 Verified source badges + 22 feed-source-{id} anchors pointing to real https URLs; Fetch verified button triggers /feed/fetch and shows 'Pulled N verified updates from live sources' toast; clicking analyze-feed-{id} on an un-analysed item populates impact-{id} with urgency badge + summary + actions. Predictive Insights page (/insights via nav-insights) renders predictions container with prediction-labour_shortage (low), prediction-cost_overrun (+365% high), prediction-delay_risk (low), AI Risk Briefing with 4 bullets, 3 scorecard cards (Sri Venkatesh Grade A/86, Sai Labour Grade B/84, Royal Aluminium Grade B/81) with score bars + ratings + deductions/pending, and Labour Spend vs Budget table with 3 project rows.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/insights", "issue": "absenteeism math can go negative (e.g. -19% absent / 119% turnout) when duplicate attendance rows exist (from prior smoke tests on Rajesh Kumar). Suggest clamping absenteeism to [0,100] before formatting metric/detail."},
+      {"endpoint": "GET /api/insights", "issue": "End-to-end latency is 30-60s because ai_summary is awaited inline. Consider returning predictions immediately and streaming/optional ai_summary via a follow-up call so the page doesn't appear blank for a full minute."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Predictive Insights cards", "issues": ["When metric is a negative (e.g. '-19% absent') the value reads awkwardly next to a 'low risk' badge — consider clamping or rephrasing when computed signals fall outside expected ranges."]},
+      {"screen": "Predictive Insights (initial paint)", "issues": ["No skeleton/placeholder while the LLM ai_summary completes — page is fully blank for ~30s on slow LLM responses; current Spinner is small and centered, easy to miss."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5_features.py",
+    "/app/test_reports/pytest/pytest_iteration5.xml"
+  ],
+  "action_items": [
+    "(Optional) Clamp absenteeism to [0,100] in /api/insights so prediction-labour_shortage doesn't display negative '-19% absent' / 119% turnout when attendance has duplicates.",
+    "(Optional) Render Insights predictions/scorecards immediately and lazy-load ai_summary so the page doesn't appear blank for ~30-60s during the LLM call.",
+    "(Env-only) Note: changes to /app/frontend/public/index.html require `sudo supervisorctl restart frontend` to be reflected in the served HTML title (CRA webpack-dev-server does not hot-reload public/index.html). No code change needed."
+  ],
+  "critical_code_review_comments": [
+    "Notifications now correctly aggregate 3 sources (compliance deadlines, high-urgency reg_feed impacts, onboarding insurance/docs gaps) into a single sorted list keyed by stable strings (comp:{id}:{due_date}, feed:{id}, onboarding:insurance, onboarding:docs). Dismissed keys persist in db.notifications_dismissed so refresh keeps them hidden — good.",
+    "POST /api/feed/fetch uses feedparser via asyncio.to_thread (non-blocking) and dedups on url before insert; capped at top 3 entries per source × 6 RSS_SOURCES = max ~18 per call. Verified source (PIB) appears in results when Google News surfaces it — works as designed.",
+    "GET /api/insights computes labour_shortage / cost_overrun / delay_risk from real attendance + transactions, then builds scorecards from sub_summary, then calls LLM for ai_summary as a best-effort try/except (returns None on failure) — good resilience.",
+    "Subcontractor scorecards: score = quality*0.75 + min(progress,100)*0.25, rating A>=85, B>=70, else C — sorted desc by score. Verified Sri Venkatesh 86=A, Sai Labour 84=B, Royal Aluminium 81=B.",
+    "POST /api/feed/{id}/impact returns the full feed item with .impact dict (not just the impact dict). Spec wording 'returns an impact object' is satisfied because impact lives inside the returned doc, but the test had to be tolerant — consider adding an explicit shape note to the API doc.",
+    "Frontend BureaucracyFeed.js correctly differentiates verified (green 'Verified source' badge + 'Read original source' link) from AI-curated (accent 'AI-curated draft' badge) — the iteration-4 design feedback about adding an AI-curated badge has been addressed.",
+    "NotificationBell.js navigates(n.link || '/compliance') on View click — link is taken from server. All three link destinations confirmed live: /feed, /workforce, /compliance."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5_features.py"
+  ],
+  "success_rate": {"backend": "100% (12/12 pytest tests passed)", "frontend": "100% of new-feature flows verified (notifications mixed types + dismiss + View navigation to /feed and /workforce; /feed verified badges + source links + analyze impact; /insights predictions + briefing + scorecards + project table; KARYA branding on Login + sidebar; tab title)"},
+  "test_credentials": "Emergent OAuth test session — user_id=user_testdemo01, session_token=test_session_demo_001 (Bearer header or session_token cookie). See /app/auth_testing.md.",
+  "seed_data_creation": "Idempotent /api/seed/demo. Tests do not seed extra data; they re-derive expected values from current GET state since prior iterations have already accumulated feed items, attendance & wages. The verified RSS fetch added more items during this run; dedup is verified on a second call.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest /app/backend/tests/test_iteration5_features.py -n 0 -v --tb=short`. /api/feed/fetch is network-dependent (Google News RSS) and may take 20-40s — fixture sets timeout=60. /api/feed/scan + /feed/{id}/impact go through EMERGENT_LLM_KEY and can be 30-90s; tests use timeout=120. /api/insights similarly blocks on ai_summary — UI test waits up to 90s for [data-testid=predictions] selector. If you change public/index.html, run `sudo supervisorctl restart frontend` before testing tab title. Inject session_token cookie before navigating to any /dashboard, /feed, /insights, /workforce route.",
+  "rca of the issue": "n/a — all three iteration-5 enhancements (notifications enrichment with regulation+onboarding+compliance links, real verified RSS connectors, Predictive Insights layer with subcontractor scorecards + AI briefing) plus the Karya rename work end-to-end across backend APIs and the React UI. Two non-blocking polish items noted: clamp absenteeism math and add a skeleton while ai_summary loads."
+}

@@ -1,0 +1,45 @@
+{
+  "summary": "Tested THREE new features (Voice STT, File upload+PDF text extraction, Proactive notifications with dismiss) plus compliance attachments integration. Backend: 13/13 new-feature pytest tests pass against the public ingress URL — voice/transcribe enforces auth + returns {text} for a synthetic 1s wav, /api/files/upload returns full record with extracted_text for both .txt and .pdf (pypdf extracts our marker), /api/files/{path} works with Bearer/cookie/?auth= query and returns 401 unauth + 404 unknown, /api/notifications returns shape {notifications,unread,critical} with severities (info/warning/critical) computed from due_date, /api/notifications/dismiss persists and decrements unread, and compliance items persist+return their attachments array. Frontend: dashboard renders command bar mic (voice-record-button) and language select (voice-language-select); header bell (notification-bell) shows red count badge ('6'), clicking opens notification-panel with 6 notification-item entries, clicking notification-dismiss decrements badge 6→5 and the corresponding entry shows dismissed. Compliance 'Add Item' dialog renders file-upload-button. SOP page renders both voice-record-button (sidebar+SOP form) and file-upload-button.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/sops/generate (intermittent)", "issue": "Long LLM calls occasionally surface as 502 to the browser at the ingress while backend logs still show 200 OK — pre-existing AI latency, not a new-feature issue. Retry typically succeeds."},
+      {"endpoint": "test_construction_os.py::TestSeed::test_seed_demo / TestDashboard::test_stats", "issue": "Two legacy tests assert seeded:True and exactly 12 workers — fail in shared workspace once seed already ran or extra TEST_ workers exist (test design issue, not API). Functionality verified separately."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard top header", "issues": ["Microphone-denied browser toast appears at top-right and can visually overlap the notification bell when permissions are blocked (headless); the bell still works on click. Consider repositioning the permission toast or using an inline error in the mic popover."]},
+      {"screen": "Radix Dialogs (Compliance/SOP detail)", "issues": ["Carry-over from iteration 1: still missing DialogDescription / aria-describedby (a11y warning in console)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/backend/tests/test_construction_os.py",
+    "/app/test_reports/pytest/pytest_new_features.xml",
+    "/app/test_reports/pytest/pytest_regression.xml"
+  ],
+  "action_items": [
+    "(Optional) Make legacy tests robust: don't assert seeded:True after idempotent run, and assert workers>=12 instead of ==12.",
+    "(Optional a11y) Add DialogDescription to Compliance/SOP Radix dialogs.",
+    "(Optional UX) Avoid mic-permission toast overlapping the notification bell."
+  ],
+  "critical_code_review_comments": [
+    "server.py: voice_transcribe correctly streams via OpenAISpeechToText with optional language; uploads validate size and extract text only for pdf/txt — good.",
+    "download_file accepts three auth sources (Cookie, Bearer, ?auth=); both Bearer and ?auth= verified by tests. Good for browser <a href> downloads.",
+    "notifications endpoint computes severity from due_date and respects per-user dismissed set via notifications_dismissed collection (upsert on dismiss). Unread/critical counts derive only from non-dismissed.",
+    "Compliance + SOP models accept attachments: List[dict]; payload round-trip verified.",
+    "Minor: voice_transcribe catches generic Exception and raises 500 — consider distinguishing 'Budget exceeded' from real failures and retrying once server-side as the LLM helper does."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py"
+  ],
+  "success_rate": {"backend": "100% on new features (13/13). Legacy 14/16 (2 test-design failures unrelated to features).", "frontend": "100% of new-feature flows verified (voice controls render, notification bell/panel/dismiss work, compliance + SOP upload controls present)."},
+  "test_credentials": "user_id=user_testdemo01, session_token=test_session_demo_001 (Bearer or cookie). See /app/auth_testing.md.",
+  "seed_data_creation": "Used POST /api/seed/demo (idempotent). Added TEST_ prefixed compliance items (TEST_Soon_Due, TEST_With_Attachment, TEST_BOCW Quarterly Cess) and TEST_attach.txt / TEST_compliance.pdf in object storage.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run new-feature tests with `pytest /app/backend/tests/test_new_features.py -n 0 -v`. Synthetic 1s 16kHz sine wav is enough to exercise Whisper STT. PDF generation in tests uses fpdf2 (already installed). For frontend, inject cookie before navigating to /dashboard. Notification badge starts >0 because seed creates compliance items with near-term due dates; do not click the mic before testing the bell — the permission-denied toast in headless overlays the bell area."
+}

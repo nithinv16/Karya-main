@@ -1,0 +1,39 @@
+{
+  "summary": "Tested NEW Subcontractor Contract Ledger feature (backend + frontend) end-to-end. Backend: 18/18 pytest cases pass against the public ingress URL — list/summary shape with all 10 ledger keys, seed math identity for Sai Labour (contract 600000, extra 70000, material 50000, retention_held 33500, identity net=(C+E)-M-D-R holds, pending = net - paid), create with retention_held = contract*retention%/100 and pending = net_payable, GET detail returns {subcontractor, transactions desc by date, summary}, DELETE cascades sub_transactions and subsequent GET returns 404, all 5 transaction types update summary correctly (payment increases paid & decreases pending without touching net_payable; extra_work bumps gross AND retention_held by retention_percent of the new gross so net_payable grows by extra - retention_delta; material decreases net_payable; deduction decreases net_payable; retention_release decreases retention_held and increases net_payable). Dashboard stats expose subcontractors count, subcontractor_pending, retention_held and subcontractor_dues array; totals match the sum across /api/subcontractors. AI assistant /api/assistant/ask 'How much do I still owe Sai Labour Suppliers?' returns a grounded answer referencing the pending figure. Frontend (cookie injected): sidebar nav-subcontractors routes to /subcontractors; subs-table shows 3 seeded rows; clicking Sai opens detail with sub-summary (8 tiles: Contract / Extra / Gross / Material / Deductions / Retention Held / Paid / Pending) and sub-ledger-table; recording a ₹50,000 Payment via add-subtxn-button → save-subtxn-button increased Paid 3,00,000 → 3,50,000 and decreased Pending 2,86,500 → 2,36,500 in the summary tiles; Add Subcontractor dialog created a TEST_UI_Sub (250000 contract, 5% retention → 12,500 retention held, 2,37,500 pending) that appears in the list with a success toast. Dashboard Command Center renders Subcontractor Dues (₹10,23,500 / 4 contracts) and Retention Held (₹1,31,500) stat tiles plus a Subcontractor Dues widget listing each sub's pending amount.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Subcontractors list table", "issues": ["The 'Project' column shows a tiny '—' pill for subcontractors without a project; could be left blank or rendered as muted text instead of a pill."]},
+      {"screen": "Subcontractor detail header", "issues": ["No back-button styling differentiation between '← All subcontractors' link and the page title — works but a subtle hover state would help discoverability."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_subcontractors.py",
+    "/app/test_reports/pytest/pytest_subcontractors.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sub_summary correctly implements the math identity: retention_held = max(0, gross*pct/100 - retention_released). This means a release reduces retention_held and (since net = gross - mat - ded - retention_held) raises net_payable by the released amount — matches spec. Good.",
+    "POST /subcontractors returns the new doc with a zero-txn summary computed inline — good UX, no need for an extra GET.",
+    "DELETE /subcontractors/{id} also deletes sub_transactions for the owner — cascading cleanup is correct.",
+    "list_subcontractors fetches all sub_transactions for the user once and filters in memory — fine at current scale but if a user has >5k txns, the to_list(5000) cap could silently truncate. Consider aggregation pipeline or per-sub query when txn volume grows.",
+    "sub_summary returns paid as sum of type=='payment' OR type=='advance'. Advances are treated like paid here, which is the right business behavior (they reduce pending) but worth documenting in the model.",
+    "The assistant context builder includes a one-line ledger summary per subcontractor — good grounding. LLM still occasionally returns transient 'Budget exceeded'; helper retries cover this.",
+    "Frontend Subcontractors.js: summary tiles read summary.* keys consistently. Add-entry dialog defaults type to 'payment' — matches the common path. Consider validating amount > 0 on the client before save.",
+    "No backend validation that SubTxn.amount > 0 — a 0 or negative payment would silently be recorded; consider Pydantic ge=0 constraint."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_subcontractors.py"
+  ],
+  "success_rate": {"backend": "100% (18/18 pytest tests passed)", "frontend": "100% of new-feature flows verified (nav, list, detail summary+ledger, add transaction updates tiles, add subcontractor appears in list, dashboard tiles+widget render)"},
+  "test_credentials": "Emergent OAuth test session — user_id=user_testdemo01, session_token=test_session_demo_001 (Bearer or cookie). See /app/auth_testing.md.",
+  "seed_data_creation": "Used existing /api/seed/demo (idempotent). Tests created TEST_LedgerSub, TEST_MathSub, TEST_DeleteMe, TEST_UI_Sub — all removed at end of run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run new feature tests with `pytest /app/backend/tests/test_subcontractors.py -n 0 -v`. Seed already inserted by earlier iterations; smoke tests may have added extra payments on Sai so don't assert hardcoded paid/pending — re-derive from current GET data, which is what the tests do. For frontend, inject session_token cookie before navigating to /subcontractors. Money rendered in Indian INR notation (₹6,00,000). Add-subtxn defaults type to 'payment'. Pydantic SubTxn.amount currently accepts any float (no >0 constraint) — main agent may want to add validation."
+}

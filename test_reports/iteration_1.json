@@ -1,0 +1,36 @@
+{
+  "summary": "Full backend + frontend testing of Construction OS MVP (Clerkworks). 16/16 backend pytest tests pass (auth, seed/idempotency, dashboard, workforce CRUD, payroll ledger, transactions, NL command bar add_advance/add_payment/add_worker, AI assistant, compliance create+analyze, SOP generate+list, knowledge create+ask). Frontend E2E verified across all 6 pages with cookie-injected session: dashboard stats render, sidebar navigation works, workforce table (13 rows), payroll ledger detail with earned/advances/deductions/balance, compliance Analyze-with-AI dialog renders structured JSON (summary, what changed, who affected, deadline, penalties, actions), SOP generator returns 14-step concrete-receiving SOP with detail dialog, Org Memory ask returns grounded answer citing seeded entry, command bar 'Ramesh took an advance of 3000' produced success toast and Advances Out updated ₹17,500 -> ₹20,500, AI Assistant returns detailed grounded answer about owed balance.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "pytest.ini config", "issue": "pytest.ini hardcodes '-n 2 --dist loadscope'. Backend tests for this app share workspace state across classes (seed -> dashboard -> workforce -> payroll -> command) so loadscope splitting classes across 2 workers caused 6/16 races on first run. Tests pass 100% with -n 0. Either consolidate into a single class to keep loadscope on one worker, or run with -n 0. Functionality itself is fine."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Radix Dialog (compliance + sop detail)", "issues": ["Console warning: Missing Description or aria-describedby={undefined} for DialogContent. Add a DialogDescription (or aria-describedby) to each DialogContent for a11y."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_construction_os.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Add DialogDescription/aria-describedby to Radix Dialog usages in Compliance.js and Sops.js (low priority a11y)",
+    "Optional: consolidate backend tests into one class OR change pytest.ini to '-n 0' so seeded shared state isn't split across xdist workers"
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~694 lines but cohesive; consider splitting into routers (auth, workforce, payroll, compliance, sop, knowledge, command, dashboard) for maintainability if it grows further.",
+    "llm() retry loop is good; consider also catching '503' / network timeouts. Currently 4 attempts with backoff is reasonable.",
+    "command endpoint relies on LLM for entity extraction; works well in tests but worker_name matching is substring-based which could mis-match similar names (Ramesh vs Ramesh Kumar) — acceptable for MVP.",
+    "extract_json is simple but resilient; falls back to {summary: out} which keeps UI working when LLM returns prose.",
+    "Auth: cookie+bearer fallback is well-implemented; protected endpoints correctly return 401 when unauth.",
+    "Frontend uses REACT_APP_BACKEND_URL via lib/api.js (confirmed working). All interactive elements have data-testid (confirmed in tests)."
+  ],
+  "updated_files": ["/app/backend/tests/test_construction_os.py"],
+  "success_rate": {"backend": "100% (16/16 sequential)", "frontend": "100% of tested flows"},
+  "test_credentials": "user_id=user_testdemo01, session_token=test_session_demo_001, cookie domain labour-brain.preview.emergentagent.com (httpOnly, secure, sameSite=None). DB test_database. See /app/auth_testing.md.",
+  "seed_data_creation": "Used POST /api/seed/demo (3 projects, 12 workers, 7-day attendance, transactions, 4 compliance items, 3 knowledge entries). Test-added artifacts prefixed 'TEST_'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run backend tests with `pytest /app/backend/tests/test_construction_os.py -n 0 -v` to avoid xdist races (shared owner_id state across classes). Frontend testing requires injecting session_token cookie before navigating. AI endpoints (assistant/ask, compliance/analyze, sops/generate, knowledge/ask, command) may take 10-25s due to Claude Sonnet 4.6 latency; use long timeouts (>=90s) and the built-in llm() helper already retries on 'Budget exceeded' transients."
+}
