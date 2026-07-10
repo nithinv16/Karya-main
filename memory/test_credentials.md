@@ -6,7 +6,7 @@ Auth is Emergent-managed Google OAuth (no app passwords).
 - user_id: `test-user-karya1`
 - email: `qa.karya@example.com`
 - session_token (Bearer): `test_session_karya1`
-- DB: `test_database`, collections `users` / `user_sessions`
+- DB: `karya_database`, collections `users` / `user_sessions`
 
 ### Browser testing
 Set `localStorage.karya_session_token = "test_session_karya1"` on the frontend origin, then visit `/dashboard`. (Cookie fallback also still works for same-origin.)
