@@ -1,7 +1,8 @@
 # Clerkworks.OS — AI Operating System for Construction
 
 ## Changelog
-- 2026-02: Fixed post-login redirect bug — AuthCallback now uses `window.location.replace('/dashboard')` after cookie exchange to avoid react-router v7 hash-retention race. Verified via 4/4 Playwright tests (iteration_8.json).
+- 2026-02 (b): Second fix for post-login redirect — root cause was React StrictMode double-mounting AuthCallback in dev, causing the one-time Emergent `session_id` to be POSTed twice: first call succeeded, second returned 401 (user_data_not_found) and its `window.location.replace('/')` overwrote the success redirect to `/dashboard`. Fix: module-scoped `let inFlight = false;` guard outside the component so only the first mount performs the exchange. Backend now also logs the Emergent response body on non-200. Verified 3/3 scenarios (iteration_9.json).
+- 2026-02 (a): AuthCallback switched from `setUser + history.replaceState + navigate('/dashboard')` to hard `window.location.replace('/dashboard')`.
 
 ## Original Problem Statement
 Build an AI-native operating system for the construction industry (India) solving informal workforce management, operational knowledge capture, compliance tracking, and process standardization. Six pillars: Workforce Intelligence, Compliance Intelligence (AI Bureaucracy Agent), Dynamic SOP Generation, Organizational Knowledge Management, Voice-First Operations, and Project Intelligence. Construction is the entry vertical; long-term vision is an operating backbone for fragmented/informal project-based economies.
