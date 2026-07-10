@@ -5,9 +5,12 @@ import { toast } from "sonner";
 import { CheckCircle, WarningCircle, FloppyDisk, PencilSimple } from "@phosphor-icons/react";
 
 const ROLES = ["Contractor", "Builder / Developer", "MEP", "Civil", "Interiors / Fit-out", "Facility Maintenance", "Other"];
-
 const REQUIRED = ["name", "phone"];
 const RECOMMENDED = ["company_name", "role", "address", "default_client_phone"];
+
+const inputCls = "w-full border-2 border-[#E4E4E7] focus:border-[#EA580C] outline-none px-3 py-2.5 text-sm transition-colors duration-200 bg-white disabled:bg-[#FAFAFA] disabled:text-[#3f3f46] mt-1";
+const labelCls = "text-[11px] font-semibold text-[#71717A] uppercase tracking-wide";
+const hintCls = "text-[11px] text-[#71717A] mt-1";
 
 export default function Profile() {
   const { user, setUser } = useAuth();
@@ -29,8 +32,6 @@ export default function Profile() {
       });
     }
   }, [user]);
-
-  const inputCls = "w-full border-2 border-[#E4E4E7] focus:border-[#EA580C] outline-none px-3 py-2.5 text-sm transition-colors duration-200 bg-white disabled:bg-[#FAFAFA] disabled:text-[#3f3f46]";
 
   const save = async (e) => {
     e.preventDefault();
@@ -61,46 +62,11 @@ export default function Profile() {
 
   if (!user) return null;
 
-  const missingReq = REQUIRED.filter((k) => !((user[k] || "").trim && user[k].trim()));
-  const missingRec = RECOMMENDED.filter((k) => !((user[k] || "").trim && user[k].trim()));
+  const missingReq = REQUIRED.filter((k) => !((user[k] || "").toString().trim()));
+  const missingRec = RECOMMENDED.filter((k) => !((user[k] || "").toString().trim()));
   const complete = user.profile_complete && missingReq.length === 0;
-
-  const Field = ({ label, k, type = "text", placeholder, disabled = false, wide = false, hint }) => (
-    <div className={wide ? "sm:col-span-2" : ""}>
-      <label className="text-[11px] font-semibold text-[#71717A] uppercase tracking-wide">{label}</label>
-      {type === "textarea" ? (
-        <textarea
-          data-testid={`profile-${k}`}
-          className={inputCls + " mt-1 min-h-20"}
-          value={form[k]}
-          onChange={(e) => setForm({ ...form, [k]: e.target.value })}
-          placeholder={placeholder}
-          disabled={disabled || !editing}
-        />
-      ) : type === "select" ? (
-        <select
-          data-testid={`profile-${k}`}
-          className={inputCls + " mt-1"}
-          value={form[k]}
-          onChange={(e) => setForm({ ...form, [k]: e.target.value })}
-          disabled={disabled || !editing}
-        >
-          <option value="">Select…</option>
-          {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-      ) : (
-        <input
-          data-testid={`profile-${k}`}
-          className={inputCls + " mt-1"}
-          value={form[k]}
-          onChange={(e) => setForm({ ...form, [k]: e.target.value })}
-          placeholder={placeholder}
-          disabled={disabled || !editing}
-        />
-      )}
-      {hint && <p className="text-[11px] text-[#71717A] mt-1">{hint}</p>}
-    </div>
-  );
+  const disabled = !editing;
+  const onChange = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   return (
     <div className="max-w-3xl mx-auto p-6 sm:p-10 fade-up">
@@ -115,7 +81,6 @@ export default function Profile() {
         {user.picture && <img src={user.picture} alt="" className="w-16 h-16 object-cover border border-[#E4E4E7]" />}
       </div>
 
-      {/* Status banner */}
       <div
         data-testid="profile-status-banner"
         className={`border-l-4 p-4 mb-6 flex items-start gap-3 ${
@@ -132,8 +97,9 @@ export default function Profile() {
             <>
               <p className="font-semibold">Your profile is complete.</p>
               <p className="text-[#71717A] mt-0.5">
-                {missingRec.length > 0 && `Optional: add ${missingRec.length} more field${missingRec.length === 1 ? "" : "s"} (${missingRec.join(", ")}) to help us route WhatsApp and alerts better.`}
-                {missingRec.length === 0 && "All the details are on file."}
+                {missingRec.length > 0
+                  ? `Optional: add ${missingRec.length} more field${missingRec.length === 1 ? "" : "s"} (${missingRec.join(", ")}) to help us route WhatsApp and alerts better.`
+                  : "All the details are on file."}
               </p>
             </>
           ) : (
@@ -149,16 +115,39 @@ export default function Profile() {
 
       <form onSubmit={save} className="space-y-4">
         <div className="grid sm:grid-cols-2 gap-4">
-          <Field label="Full name *" k="name" placeholder="Your full name" />
-          <Field label="Phone (WhatsApp) *" k="phone" placeholder="+91 98xxxxxxxx" hint="Used for WhatsApp alerts and to appear as sender in reports." />
-          <Field label="Company / firm" k="company_name" placeholder="ABC Construction Pvt. Ltd." />
-          <Field label="Role / trade" k="role" type="select" />
-          <Field label="Default client WhatsApp" k="default_client_phone" placeholder="+91 98xxxxxxxx" hint="Used by the 'Send now' button on Daily Reports." />
-          <div className="sm:col-span-2">
-            <label className="text-[11px] font-semibold text-[#71717A] uppercase tracking-wide">Email (from Google)</label>
-            <input data-testid="profile-email-field" className={inputCls + " mt-1"} value={user.email || ""} disabled />
+          <div>
+            <label className={labelCls}>Full name *</label>
+            <input data-testid="profile-name" className={inputCls} value={form.name} onChange={onChange("name")} placeholder="Your full name" disabled={disabled} />
           </div>
-          <Field label="Office address" k="address" type="textarea" wide placeholder="Street, city, state, PIN" />
+          <div>
+            <label className={labelCls}>Phone (WhatsApp) *</label>
+            <input data-testid="profile-phone" className={inputCls} value={form.phone} onChange={onChange("phone")} placeholder="+91 98xxxxxxxx" disabled={disabled} />
+            <p className={hintCls}>Used for WhatsApp alerts and to appear as sender in reports.</p>
+          </div>
+          <div>
+            <label className={labelCls}>Company / firm</label>
+            <input data-testid="profile-company_name" className={inputCls} value={form.company_name} onChange={onChange("company_name")} placeholder="ABC Construction Pvt. Ltd." disabled={disabled} />
+          </div>
+          <div>
+            <label className={labelCls}>Role / trade</label>
+            <select data-testid="profile-role" className={inputCls} value={form.role} onChange={onChange("role")} disabled={disabled}>
+              <option value="">Select…</option>
+              {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Default client WhatsApp</label>
+            <input data-testid="profile-default_client_phone" className={inputCls} value={form.default_client_phone} onChange={onChange("default_client_phone")} placeholder="+91 98xxxxxxxx" disabled={disabled} />
+            <p className={hintCls}>Used by the &quot;Send now&quot; button on Daily Reports.</p>
+          </div>
+          <div className="sm:col-span-2">
+            <label className={labelCls}>Email (from Google)</label>
+            <input data-testid="profile-email-field" className={inputCls} value={user.email || ""} disabled />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={labelCls}>Office address</label>
+            <textarea data-testid="profile-address" className={inputCls + " min-h-20"} value={form.address} onChange={onChange("address")} placeholder="Street, city, state, PIN" disabled={disabled} />
+          </div>
         </div>
 
         <div className="flex items-center gap-3 pt-2">

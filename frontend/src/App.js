@@ -19,7 +19,7 @@ import DailyReports from "@/pages/DailyReports";
 import Onboarding from "@/pages/Onboarding";
 import Profile from "@/pages/Profile";
 
-function Protected({ children }) {
+function Protected({ children, allowIncomplete = false }) {
   const { user, loading } = useAuth();
   if (loading) {
     return (
@@ -29,7 +29,7 @@ function Protected({ children }) {
     );
   }
   if (!user) return <Navigate to="/" replace />;
-  if (user.profile_complete === false) return <Navigate to="/onboarding" replace />;
+  if (!allowIncomplete && user.profile_complete === false) return <Navigate to="/onboarding" replace />;
   return children;
 }
 
@@ -67,6 +67,15 @@ function AppRouter() {
       />
       <Route
         element={
+          <Protected allowIncomplete>
+            <AppLayout />
+          </Protected>
+        }
+      >
+        <Route path="/profile" element={<Profile />} />
+      </Route>
+      <Route
+        element={
           <Protected>
             <AppLayout />
           </Protected>
@@ -82,7 +91,6 @@ function AppRouter() {
         <Route path="/sops" element={<Sops />} />
         <Route path="/knowledge" element={<Knowledge />} />
         <Route path="/insights" element={<Insights />} />
-        <Route path="/profile" element={<Profile />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
