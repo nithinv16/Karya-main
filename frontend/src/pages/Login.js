@@ -42,7 +42,7 @@ export default function Login() {
             <GoogleLogo size={20} weight="bold" />
             Continue with Google
           </button>
-          <p className="text-xs text-[#71717A] mt-4">No setup. Demo data loads automatically on first sign-in.</p>
+          <p className="text-xs text-[#71717A] mt-4">No setup. Sign in and start running your operations on live data.</p>
         </div>
 
         <p className="text-xs text-[#71717A]">Built for contractors, builders, MEP & civil firms across emerging markets.</p>

@@ -15,6 +15,7 @@ import BureaucracyFeed from "@/pages/BureaucracyFeed";
 import Sops from "@/pages/Sops";
 import Knowledge from "@/pages/Knowledge";
 import Insights from "@/pages/Insights";
+import DailyReports from "@/pages/DailyReports";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -55,6 +56,7 @@ function AppRouter() {
         <Route path="/workforce" element={<Workforce />} />
         <Route path="/payroll" element={<Payroll />} />
         <Route path="/subcontractors" element={<Subcontractors />} />
+        <Route path="/reports" element={<DailyReports />} />
         <Route path="/compliance" element={<Compliance />} />
         <Route path="/feed" element={<BureaucracyFeed />} />
         <Route path="/sops" element={<Sops />} />

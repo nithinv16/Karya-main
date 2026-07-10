@@ -6,7 +6,7 @@ import AIAssistant from "@/components/AIAssistant";
 import NotificationBell from "@/components/NotificationBell";
 import {
   HardHat, SquaresFour, UsersThree, Money, ShieldCheck,
-  ListChecks, Brain, SignOut, Sparkle, Handshake, Broadcast, ChartLineUp,
+  ListChecks, Brain, SignOut, Sparkle, Handshake, Broadcast, ChartLineUp, ClipboardText,
 } from "@phosphor-icons/react";
 
 const nav = [
@@ -14,6 +14,7 @@ const nav = [
   { to: "/workforce", label: "Workforce", icon: UsersThree },
   { to: "/payroll", label: "Payroll & Settlements", icon: Money },
   { to: "/subcontractors", label: "Subcontractors", icon: Handshake },
+  { to: "/reports", label: "Daily Reports", icon: ClipboardText },
   { to: "/insights", label: "Predictive Insights", icon: ChartLineUp },
   { to: "/compliance", label: "Compliance Agent", icon: ShieldCheck },
   { to: "/feed", label: "Regulation Feed", icon: Broadcast },
