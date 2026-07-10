@@ -8,7 +8,7 @@ import time
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://5a4dc3f8-621c-43ea-88bc-ebe27ab496fc.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://karya-setup.preview.emergentagent.com").rstrip("/")
 TOKEN = "test_session_karya1"
 H = {"Authorization": f"Bearer {TOKEN}"}
 JH = {**H, "Content-Type": "application/json"}

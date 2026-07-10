@@ -14,7 +14,7 @@ Set `localStorage.karya_session_token = "test_session_karya1"` on the frontend o
 ### API testing
 ```
 curl -H "Authorization: Bearer test_session_karya1" \
-  https://5a4dc3f8-621c-43ea-88bc-ebe27ab496fc.preview.emergentagent.com/api/auth/me
+  https://karya-setup.preview.emergentagent.com/api/auth/me
 ```
 
 See /app/auth_testing.md for creating fresh sessions.
