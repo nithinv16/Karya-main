@@ -29,6 +29,11 @@ Build an AI-native operating system for the construction industry (India) solvin
 - Endpoints: `/api/subcontractors` (GET/POST), `/api/subcontractors/{id}` (GET/DELETE, cascades sub_transactions), `/api/subcontractors/{id}/transactions` (POST, rejects ≤0). Collections: `subcontractors`, `sub_transactions`.
 - Dashboard surfaces Subcontractor Dues + Retention Held tiles and a dues widget; AI assistant grounded on subcontractor ledger ("How much do I owe Sai Labour Suppliers?"). Demo seed adds 3 subcontractors with realistic ledgers. Tested: 18/18 backend + 100% frontend, no issues.
 
+### Iteration 7 — Full platform rebuild + Daily Report Generator (2026-07-10)
+- Fork arrived with the ENTIRE backend missing (only frontend committed to git). Rebuilt `/app/backend/server.py` from scratch to match the frontend API contract + this PRD: auth (Emergent Google OAuth, cookie+Bearer), workforce/projects, transactions/ledgers, subcontractor contract ledger, NL command parser (Claude), compliance agent + AI analyze, live RSS regulation feed + impact + track-to-compliance, SOP generator, org memory Q&A, ops assistant, dashboard stats, notifications (compliance deadlines + high-urgency feed + onboarding gaps, per-user dismiss), predictive insights + AI briefing, Whisper voice transcription, object-storage file uploads with PDF/txt text extraction. New Emergent LLM key configured; .env files recreated.
+- **NEW: Daily Report Generator** (`/reports`, nav "Daily Reports"): field team uploads site photos + records a voice note (Whisper) + captures location (manual or browser geolocation) → Claude Sonnet 4.6 (vision) writes a professional daily report (title, summary, work completed, manpower, materials, issues/delays, safety observations, next steps). Endpoints: `POST /api/reports/generate` (photos passed as base64 ImageContent), `GET/DELETE /api/reports(/{id})`. Report archive + detail modal with photos.
+- Login copy updated (live-data only, no demo). Tested: 36/36 backend + 100% frontend (iteration_7.json), zero issues. Verified Claude actually reads photo content in reports.
+
 ### Iteration 6 — Live-data-only + more official connectors + regulation→compliance
 - **Removed ALL demo/sample data**: deleted `/api/seed/demo` and the AI "scan" (fabricated) feed. App runs on LIVE data only. UI scrubbed of "Load demo data" and "demo" copy; Dashboard empty state now guides real setup + live feed.
 - **More official source connectors** (10 live RSS queries via Google News India, surfacing CBIC/GST, CPWD & state PWD & eProcurement tenders, BOCW/labour, NBC safety, municipal bylaws, environment/C&D). `POST /api/feed/fetch` pulls real, source-linked, deduped items (verified=true). Note: source links are Google News redirect URLs that resolve to the official issuer/publisher; publisher name shown on each card.
@@ -61,6 +66,7 @@ Build an AI-native operating system for the construction industry (India) solvin
 - P2: WhatsApp integration for command intake.
 
 ## Next Tasks
-1. Add real voice-first input (Whisper STT) feeding the existing command parser.
-2. Add file uploads + object storage for compliance documents and SOP media.
-3. Deadline notification engine for compliance alerts.
+1. Share/export Daily Reports (PDF export, WhatsApp share link to client).
+2. Multi-user roles per company (field employee vs owner) + invitations, so field staff submit reports from their own logins.
+3. Email/WhatsApp delivery of compliance deadline notifications.
+4. Reverse-geocode report location (lat/long → address).
