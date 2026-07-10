@@ -1,8 +1,8 @@
-import { useEffect } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { I18nProvider } from "@/lib/i18n";
 import AuthCallback from "@/pages/AuthCallback";
 import Login from "@/pages/Login";
 import AppLayout from "@/components/AppLayout";
@@ -18,6 +18,7 @@ import Insights from "@/pages/Insights";
 import DailyReports from "@/pages/DailyReports";
 import Onboarding from "@/pages/Onboarding";
 import Profile from "@/pages/Profile";
+import Help from "@/pages/Help";
 
 function Protected({ children, allowIncomplete = false }) {
   const { user, loading } = useAuth();
@@ -91,10 +92,16 @@ function AppRouter() {
         <Route path="/sops" element={<Sops />} />
         <Route path="/knowledge" element={<Knowledge />} />
         <Route path="/insights" element={<Insights />} />
+        <Route path="/help" element={<Help />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
+}
+
+function I18nBinder({ children }) {
+  const { user } = useAuth();
+  return <I18nProvider userLang={user?.language}>{children}</I18nProvider>;
 }
 
 function App() {
@@ -102,8 +109,10 @@ function App() {
     <div className="App">
       <BrowserRouter>
         <AuthProvider>
-          <Toaster position="top-right" theme="light" />
-          <AppRouter />
+          <I18nBinder>
+            <Toaster position="top-right" theme="light" />
+            <AppRouter />
+          </I18nBinder>
         </AuthProvider>
       </BrowserRouter>
     </div>

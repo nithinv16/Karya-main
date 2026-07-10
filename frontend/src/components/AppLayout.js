@@ -1,51 +1,54 @@
 import React, { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { useI18n } from "@/lib/i18n";
 import CommandBar from "@/components/CommandBar";
 import AIAssistant from "@/components/AIAssistant";
 import NotificationBell from "@/components/NotificationBell";
 import {
   HardHat, SquaresFour, UsersThree, Money, ShieldCheck,
   ListChecks, Brain, SignOut, Sparkle, Handshake, Broadcast, ChartLineUp, ClipboardText,
-  DotsThreeCircle, X, UserCircle,
+  DotsThreeCircle, X, UserCircle, Question,
 } from "@phosphor-icons/react";
 
-const nav = [
-  { to: "/dashboard", label: "Command Center", icon: SquaresFour },
-  { to: "/workforce", label: "Workforce", icon: UsersThree },
-  { to: "/payroll", label: "Payroll & Settlements", icon: Money },
-  { to: "/subcontractors", label: "Subcontractors", icon: Handshake },
-  { to: "/reports", label: "Daily Reports", icon: ClipboardText },
-  { to: "/insights", label: "Predictive Insights", icon: ChartLineUp },
-  { to: "/compliance", label: "Compliance Agent", icon: ShieldCheck },
-  { to: "/feed", label: "Regulation Feed", icon: Broadcast },
-  { to: "/sops", label: "SOP Generator", icon: ListChecks },
-  { to: "/knowledge", label: "Org Memory", icon: Brain },
+const NAV_KEYS = [
+  { to: "/dashboard", key: "nav.dashboard", icon: SquaresFour },
+  { to: "/workforce", key: "nav.workforce", icon: UsersThree },
+  { to: "/payroll", key: "nav.payroll", icon: Money },
+  { to: "/subcontractors", key: "nav.subcontractors", icon: Handshake },
+  { to: "/reports", key: "nav.reports", icon: ClipboardText },
+  { to: "/insights", key: "nav.insights", icon: ChartLineUp },
+  { to: "/compliance", key: "nav.compliance", icon: ShieldCheck },
+  { to: "/feed", key: "nav.feed", icon: Broadcast },
+  { to: "/sops", key: "nav.sops", icon: ListChecks },
+  { to: "/knowledge", key: "nav.knowledge", icon: Brain },
+  { to: "/help", key: "nav.help", icon: Question },
 ];
 
-const mobileTabs = [
-  { to: "/dashboard", label: "Home", icon: SquaresFour },
-  { to: "/workforce", label: "Workforce", icon: UsersThree },
-  { to: "/reports", label: "Reports", icon: ClipboardText },
-  { to: "/payroll", label: "Payroll", icon: Money },
+const MOBILE_TAB_KEYS = [
+  { to: "/dashboard", key: "mobile.home", icon: SquaresFour },
+  { to: "/workforce", key: "mobile.workforce", icon: UsersThree },
+  { to: "/reports", key: "mobile.reports", icon: ClipboardText },
+  { to: "/payroll", key: "mobile.payroll", icon: Money },
 ];
 
 function MoreSheet({ open, onClose, onLogout, user }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useI18n();
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
   }, [open]);
   if (!open) return null;
-  const rest = nav.filter((n) => !mobileTabs.some((t) => t.to === n.to));
+  const rest = NAV_KEYS.filter((n) => !MOBILE_TAB_KEYS.some((m) => m.to === n.to));
   const go = (to) => { onClose(); navigate(to); };
   return (
     <div className="fixed inset-0 z-50 md:hidden" data-testid="mobile-more-sheet">
       <div className="absolute inset-0 bg-black/40 fade-in" onClick={onClose} />
       <div className="absolute bottom-0 inset-x-0 bg-white border-t-2 border-[#09090B] sheet-up safe-bottom max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 pt-4 pb-2">
-          <p className="overline">All modules</p>
+          <p className="overline">{t("help.sections", "All modules")}</p>
           <button data-testid="close-more-sheet" onClick={onClose} className="p-2 -m-2 text-[#71717A] press"><X size={20} weight="bold" /></button>
         </div>
         <div className="grid grid-cols-3 gap-2 px-4 pb-3">
@@ -61,7 +64,7 @@ function MoreSheet({ open, onClose, onLogout, user }) {
                 }`}
               >
                 <n.icon size={22} weight="duotone" className={active ? "text-[#EA580C]" : "text-[#71717A]"} />
-                {n.label}
+                {t(n.key)}
               </button>
             );
           })}
@@ -75,14 +78,14 @@ function MoreSheet({ open, onClose, onLogout, user }) {
             )}
             <div className="min-w-0">
               <p className="text-sm font-semibold truncate flex items-center gap-1.5">
-                {user?.name || "Profile"}
+                {user?.name || t("nav.profile")}
                 <UserCircle size={14} className="text-[#71717A]" />
               </p>
               <p className="text-xs text-[#71717A] truncate">{user?.email}</p>
             </div>
           </button>
           <button data-testid="mobile-logout" onClick={onLogout} className="press flex items-center gap-1.5 text-xs font-semibold text-[#71717A] border border-[#E4E4E7] px-3 py-2">
-            <SignOut size={15} weight="bold" /> Sign out
+            <SignOut size={15} weight="bold" /> {t("action.signOut")}
           </button>
         </div>
       </div>
@@ -92,6 +95,7 @@ function MoreSheet({ open, onClose, onLogout, user }) {
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
+  const { t } = useI18n();
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const navigate = useNavigate();
@@ -119,7 +123,7 @@ export default function AppLayout() {
           <span className="font-display font-extrabold tracking-tight">KARYA<span className="text-[#EA580C]">.</span></span>
         </div>
         <nav className="flex-1 py-4 overflow-y-auto">
-          {nav.map((n) => (
+          {NAV_KEYS.map((n) => (
             <NavLink
               key={n.to}
               to={n.to}
@@ -133,7 +137,7 @@ export default function AppLayout() {
               }
             >
               <n.icon size={18} weight="duotone" />
-              {n.label}
+              {t(n.key)}
             </NavLink>
           ))}
         </nav>
@@ -153,7 +157,7 @@ export default function AppLayout() {
             )}
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold truncate flex items-center gap-1.5">
-                {user?.name || "Set up profile"}
+                {user?.name || t("nav.profile")}
                 {user?.profile_complete === false && (
                   <span data-testid="profile-incomplete-dot" className="w-1.5 h-1.5 bg-[#EA580C] shrink-0" title="Profile incomplete" />
                 )}
@@ -168,7 +172,7 @@ export default function AppLayout() {
             onClick={logout}
             className="flex items-center gap-2 text-xs font-semibold text-[#71717A] hover:text-[#DC2626] transition-colors duration-200"
           >
-            <SignOut size={16} weight="bold" /> Sign out
+            <SignOut size={16} weight="bold" /> {t("action.signOut")}
           </button>
         </div>
       </aside>
@@ -198,7 +202,7 @@ export default function AppLayout() {
             onClick={() => setAssistantOpen(true)}
             className="hidden sm:flex items-center gap-2 bg-[#09090B] text-white px-4 py-2.5 text-sm font-semibold hover:bg-[#EA580C] transition-colors duration-200 shrink-0"
           >
-            <Sparkle size={16} weight="fill" /> Ask AI
+            <Sparkle size={16} weight="fill" /> {t("action.askAI")}
           </button>
         </header>
 
@@ -222,7 +226,7 @@ export default function AppLayout() {
 
       {/* mobile bottom tab bar */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t-2 border-[#09090B] flex z-40 safe-bottom" data-testid="mobile-bottom-nav">
-        {mobileTabs.map((n) => {
+        {MOBILE_TAB_KEYS.map((n) => {
           const active = location.pathname === n.to;
           return (
             <button
@@ -234,7 +238,7 @@ export default function AppLayout() {
               }`}
             >
               <n.icon size={22} weight={active ? "fill" : "duotone"} />
-              {n.label}
+              {t(n.key)}
               <span className={`h-0.5 w-8 mt-0.5 ${active ? "bg-[#EA580C]" : "bg-transparent"}`} />
             </button>
           );
@@ -245,7 +249,7 @@ export default function AppLayout() {
           className={`press flex-1 flex flex-col items-center gap-0.5 pt-2 pb-1.5 text-[10px] font-semibold ${moreOpen ? "text-[#EA580C]" : "text-[#71717A]"}`}
         >
           <DotsThreeCircle size={22} weight="duotone" />
-          More
+          {t("mobile.more")}
           <span className="h-0.5 w-8 mt-0.5 bg-transparent" />
         </button>
       </nav>

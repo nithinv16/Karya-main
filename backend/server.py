@@ -2585,6 +2585,97 @@ async def export_compliance(format: str = "pdf", user: dict = Depends(get_curren
 
 # ---------------------------------------------------------------- app wiring
 
+# ---- translation & help (i18n dynamic content, help center Q&A) --------------
+
+_LANG_NAMES = {"en": "English", "hi": "Hindi", "ml": "Malayalam", "ta": "Tamil", "te": "Telugu"}
+
+
+class TranslateIn(BaseModel):
+    text: str
+    target_lang: str
+    context: Optional[str] = ""
+
+
+@api.post("/translate")
+async def translate(body: TranslateIn, user: dict = Depends(get_current_user)):
+    text = (body.text or "").strip()
+    lang = (body.target_lang or "").strip().lower()
+    if not text:
+        raise HTTPException(status_code=400, detail="Nothing to translate.")
+    if lang not in _LANG_NAMES:
+        raise HTTPException(status_code=400, detail=f"Unsupported language '{lang}'.")
+    if lang == "en":
+        return {"translated": text, "cached": False}
+    # Cache: same (hash of text, target_lang) reuses the answer across users
+    import hashlib
+    key = hashlib.sha256(f"{lang}:{text}".encode("utf-8")).hexdigest()
+    cached = await db.translations.find_one({"_id": key}, {"_id": 0})
+    if cached and cached.get("translated"):
+        return {"translated": cached["translated"], "cached": True}
+    target_name = _LANG_NAMES[lang]
+    system = (
+        f"You are a professional translator into {target_name}. Translate the user's text "
+        f"into {target_name} preserving meaning, tone, formatting (line breaks, bullet dashes), "
+        f"and any numbers, dates, currency symbols, phone numbers and proper nouns exactly. "
+        f"Output ONLY the translation — no preamble, no quotes, no explanations."
+    )
+    hint = f"Context: {body.context.strip()}\n\n" if body.context else ""
+    try:
+        translated = await ai_text(system, hint + text)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Translation failed: {e}")
+    translated = (translated or "").strip()
+    if translated:
+        await db.translations.update_one(
+            {"_id": key},
+            {"$set": {"translated": translated, "lang": lang, "created_at": now_iso()}},
+            upsert=True,
+        )
+    return {"translated": translated, "cached": False}
+
+
+class HelpAskIn(BaseModel):
+    question: str
+
+
+@api.post("/help/ask")
+async def help_ask(body: HelpAskIn, user: dict = Depends(get_current_user)):
+    question = (body.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Ask a question.")
+    lang = (user.get("language") or "en").lower()
+    lang_name = _LANG_NAMES.get(lang, "English")
+    # Compact system prompt describing what Karya does — grounds answers.
+    system = (
+        "You are the built-in help assistant for Karya, an AI operating system for small/mid-size "
+        "construction contractors. Answer the user's how-to / troubleshooting question concisely "
+        "(3–8 short sentences or 3–6 bullet dashes). Ground answers strictly in the capabilities below.\n\n"
+        "CAPABILITIES:\n"
+        "- Google sign-in only. Profile stores name, phone, company, country (India/UAE), language.\n"
+        "- Workforce: projects, workers (trade, wage rate: daily/hourly/monthly/contract/piece), attendance, advances.\n"
+        "- Payroll & Settlements: net-payable ledger per worker; settlements as cash/bank/UPI/WPS.\n"
+        "- Daily Reports: AI writes from voice notes + photos; auto-send on WhatsApp via Twilio (sandbox or approved BSP number).\n"
+        "- SOP Generator: activity-specific standard operating procedures with materials, safety, QC.\n"
+        "- Compliance Agent: country-seeded checklist (IN: BOCW, GST, CLRA, ESIC/EPFO; AE: DED, MOHRE, EID, WPS, Civil Defense). AI penalty analysis.\n"
+        "- Regulation Feed: live news + updates for the user's country.\n"
+        "- Predictive Insights: labour-shortage / cost-overrun / delay-risk + subcontractor scorecards.\n"
+        "- Subcontractors: contract value, retention %, deductions, pending balance.\n"
+        "- Org Memory: durable notes + AI Q&A over saved knowledge.\n"
+        "- Telegram bot @karya_ops_bot: link via 6-char code in Profile. Send text, voice notes, receipts, photos, PDFs. AI executes commands (advance, payment, attendance, tasks) and routes media (worker file / receipt / compliance / daily report / note).\n"
+        "- WhatsApp: Twilio-powered. Phone verification uses Twilio Verify (Profile → Verify phone).\n\n"
+        f"Reply in {lang_name}. If the user asks something Karya doesn't do, say so briefly and suggest the closest workflow."
+    )
+    try:
+        answer = await ai_text(system, question)
+    except HTTPException:
+        raise
+    return {"answer": answer.strip(), "lang": lang}
+
+
+# ---- root + router mounts ----------------------------------------------------
+
 @api.get("/")
 async def root():
     return {"status": "ok", "service": "Karya API"}
