@@ -14,8 +14,13 @@ export default function BureaucracyFeed() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ title: "", source: "", category: "labour", region: "", summary: "" });
+  const [filterRegion, setFilterRegion] = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
 
-  const { data: items, isLoading } = useQuery({ queryKey: ["feed"], queryFn: async () => (await api.get("/feed")).data });
+  const { data: items, isLoading } = useQuery({
+    queryKey: ["feed", filterRegion, filterCategory],
+    queryFn: async () => (await api.get("/feed", { params: { region: filterRegion, category: filterCategory } })).data,
+  });
 
   const fetchVerified = useMutation({
     mutationFn: async () => (await api.post("/feed/fetch")).data,
@@ -75,6 +80,29 @@ export default function BureaucracyFeed() {
           </div>
         }
       />
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 mb-5" data-testid="feed-filters">
+        <input
+          data-testid="feed-region-filter"
+          value={filterRegion}
+          onChange={(e) => setFilterRegion(e.target.value)}
+          placeholder="Filter by region (e.g. Karnataka, Delhi, UAE)"
+          className="border-2 border-[#E4E4E7] focus:border-[#EA580C] outline-none px-3 py-1.5 text-sm bg-white w-64"
+        />
+        <select
+          data-testid="feed-category-filter"
+          value={filterCategory}
+          onChange={(e) => setFilterCategory(e.target.value)}
+          className="border-2 border-[#E4E4E7] focus:border-[#EA580C] outline-none px-3 py-1.5 text-sm bg-white"
+        >
+          <option value="">All categories</option>
+          {CATS.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {(filterRegion || filterCategory) && (
+          <button data-testid="feed-clear-filters" onClick={() => { setFilterRegion(""); setFilterCategory(""); }} className="text-xs text-[#EA580C] font-semibold hover:underline">Clear filters</button>
+        )}
+      </div>
 
       {isLoading ? <Spinner /> : items?.length === 0 ? (
         <div className="border border-[#E4E4E7] p-12 text-center">

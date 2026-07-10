@@ -716,8 +716,43 @@ class ComplianceIn(BaseModel):
     title: str
     category: str = "permit"
     due_date: str = ""
+    expiry_date: str = ""
+    project_ids: List[str] = []
+    status: str = "pending"  # pending | in_progress | completed
     document_text: str = ""
     attachments: List[Dict[str, Any]] = []
+
+class ComplianceUpdate(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    due_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    project_ids: Optional[List[str]] = None
+    status: Optional[str] = None
+    document_text: Optional[str] = None
+    renewal_plan: Optional[Dict[str, Any]] = None
+    penalty_estimate: Optional[Dict[str, Any]] = None
+
+
+def _compliance_urgency(due: str) -> tuple[str, Optional[int]]:
+    """Return (bucket, days_left) where bucket ∈ overdue/critical/warning/watch/ok/none."""
+    if not due:
+        return "none", None
+    try:
+        d = datetime.fromisoformat(due.replace("Z", "+00:00")) if "T" in due else datetime.strptime(due, "%Y-%m-%d")
+    except Exception:
+        return "none", None
+    days = (d.date() - datetime.now(timezone.utc).date()).days
+    if days < 0:
+        return "overdue", days
+    if days <= 7:
+        return "critical", days
+    if days <= 15:
+        return "warning", days
+    if days <= 30:
+        return "watch", days
+    return "ok", days
+
 
 @api.get("/compliance")
 async def list_compliance(user: dict = Depends(get_current_user)):
@@ -725,16 +760,36 @@ async def list_compliance(user: dict = Depends(get_current_user)):
 
 @api.post("/compliance")
 async def create_compliance(body: ComplianceIn, user: dict = Depends(get_current_user)):
-    doc = {"id": new_id(), "owner_id": user["user_id"], **body.model_dump(), "analysis": None, "created_at": now_iso()}
+    doc = {"id": new_id(), "owner_id": user["user_id"], **body.model_dump(),
+           "analysis": None, "renewal_plan": None, "penalty_estimate": None,
+           "history": [{"action": "created", "at": now_iso(), "note": ""}],
+           "created_at": now_iso()}
     await db.compliance.insert_one({**doc})
     doc.pop("_id", None)
     return doc
 
+@api.patch("/compliance/{item_id}")
+async def update_compliance(item_id: str, body: ComplianceUpdate, user: dict = Depends(get_current_user)):
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not patch:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    res = await db.compliance.update_one({"id": item_id, "owner_id": user["user_id"]}, {"$set": patch, "$push": {"history": {"action": "updated", "at": now_iso(), "note": ",".join(patch.keys())}}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return await db.compliance.find_one({"id": item_id, "owner_id": user["user_id"]}, {"_id": 0})
+
+@api.delete("/compliance/{item_id}")
+async def delete_compliance(item_id: str, user: dict = Depends(get_current_user)):
+    res = await db.compliance.delete_one({"id": item_id, "owner_id": user["user_id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"deleted": True}
+
 COMPLIANCE_SYSTEM = """You are a compliance analyst for Indian construction businesses (permits, licenses, BOCW, GST, labour laws, municipal approvals, tenders, insurance).
 Analyze the given compliance item/document and output JSON:
-{"summary": str, "what_changed": str, "who_is_affected": str, "deadline": str, "penalties": str,
+{"summary": str, "what_changed": str, "who_is_affected": str, "deadline": str, "expiry_date": "YYYY-MM-DD or empty", "penalties": str,
  "actions_required": [str], "risk_level": "high"|"medium"|"low"}
-Be specific and practical for a small/mid contractor. If the document text is thin, infer from the title and category."""
+Be specific and practical for a small/mid contractor. If the document text is thin, infer from the title and category. If any date (validity/expiry/renewal) is present in the text, return it in expiry_date as ISO."""
 
 @api.post("/compliance/{item_id}/analyze")
 async def analyze_compliance(item_id: str, user: dict = Depends(get_current_user)):
@@ -746,9 +801,104 @@ async def analyze_compliance(item_id: str, user: dict = Depends(get_current_user
         f"Document text:\n{(item.get('document_text') or '')[:5000]}"
     )
     analysis = await ai_json(COMPLIANCE_SYSTEM, prompt)
-    await db.compliance.update_one({"id": item_id}, {"$set": {"analysis": analysis}})
-    item["analysis"] = analysis
+    patch: Dict[str, Any] = {"analysis": analysis}
+    # If OCR/AI surfaced a real expiry date, backfill it (never overwrite an existing one).
+    if analysis and analysis.get("expiry_date") and not item.get("expiry_date"):
+        patch["expiry_date"] = analysis["expiry_date"]
+        if not item.get("due_date"):
+            patch["due_date"] = analysis["expiry_date"]
+    await db.compliance.update_one({"id": item_id}, {"$set": patch, "$push": {"history": {"action": "analyzed", "at": now_iso(), "note": ""}}})
+    item.update(patch)
     return item
+
+RENEWAL_SYSTEM = """You are a compliance operations expert for Indian construction. Given a permit/license/registration item, output a JSON RENEWAL PLAN a small contractor can execute today:
+{"docs_needed": [str], "submission_office": str, "fee_estimate": str, "processing_time": str,
+ "steps": [{"title": str, "detail": str, "done": false}], "portal_url": str}
+Steps must be atomic (1-3 lines each), sequenced, and specific to India + the item category. Include ~5-8 steps."""
+
+@api.post("/compliance/{item_id}/renew")
+async def compliance_renew_plan(item_id: str, user: dict = Depends(get_current_user)):
+    item = await db.compliance.find_one({"id": item_id, "owner_id": user["user_id"]}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    prompt = (
+        f"Title: {item['title']}\nCategory: {item['category']}\nDue: {item.get('due_date') or 'unknown'}\n"
+        f"Existing analysis (may be empty): {json.dumps(item.get('analysis') or {})[:1200]}"
+    )
+    plan = await ai_json(RENEWAL_SYSTEM, prompt)
+    await db.compliance.update_one({"id": item_id}, {"$set": {"renewal_plan": plan, "status": "in_progress"}, "$push": {"history": {"action": "renewal_plan_generated", "at": now_iso(), "note": ""}}})
+    item["renewal_plan"] = plan
+    item["status"] = "in_progress"
+    return item
+
+PENALTY_SYSTEM = """You compute late-compliance penalties for Indian construction. Given an item + days-overdue, output JSON:
+{"currency": "INR", "amount_min": number, "amount_max": number, "basis": str,
+ "escalation": [{"days_after_due": int, "penalty": str}], "worst_case": str}
+Be concrete: cite typical BOCW/GST/labour/factories act penalty ranges. If uncertain, give a wide sensible range and mark basis as "typical range – verify with authority"."""
+
+@api.post("/compliance/{item_id}/penalty")
+async def compliance_penalty(item_id: str, user: dict = Depends(get_current_user)):
+    item = await db.compliance.find_one({"id": item_id, "owner_id": user["user_id"]}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    bucket, days = _compliance_urgency(item.get("due_date") or item.get("expiry_date") or "")
+    days_overdue = -days if (days is not None and days < 0) else 0
+    prompt = (
+        f"Title: {item['title']}\nCategory: {item['category']}\nDays overdue: {days_overdue}\n"
+        f"Region: India (assume worst-case central + state overlap unless obvious)."
+    )
+    est = await ai_json(PENALTY_SYSTEM, prompt)
+    est["days_overdue"] = days_overdue
+    await db.compliance.update_one({"id": item_id}, {"$set": {"penalty_estimate": est}, "$push": {"history": {"action": "penalty_estimated", "at": now_iso(), "note": ""}}})
+    item["penalty_estimate"] = est
+    return item
+
+@api.get("/compliance/dashboard")
+async def compliance_dashboard(user: dict = Depends(get_current_user)):
+    """Aggregate score + urgency buckets + penalty exposure. Feeds Compliance page hero card."""
+    items = await db.compliance.find({"owner_id": user["user_id"]}, {"_id": 0}).to_list(1000)
+    buckets = {"overdue": [], "critical": [], "warning": [], "watch": [], "ok": [], "none": []}
+    penalty_exposure = 0.0
+    for it in items:
+        b, d = _compliance_urgency(it.get("due_date") or it.get("expiry_date") or "")
+        if it.get("status") == "completed":
+            buckets["ok"].append({"id": it["id"], "title": it["title"], "days": d, "category": it.get("category")})
+            continue
+        buckets[b].append({"id": it["id"], "title": it["title"], "days": d, "category": it.get("category")})
+        if b == "overdue":
+            pe = it.get("penalty_estimate") or {}
+            penalty_exposure += float(pe.get("amount_max") or pe.get("amount_min") or 0)
+    total = len(items) or 1
+    completed = sum(1 for it in items if it.get("status") == "completed")
+    overdue = len(buckets["overdue"])
+    critical = len(buckets["critical"])
+    warning = len(buckets["warning"])
+    # Score: start at 100, deduct heavy for overdue, moderate for critical, light for warning
+    score = 100 - (overdue * 15) - (critical * 8) - (warning * 4)
+    # Bonus for completion rate
+    score += int((completed / total) * 10) if total else 0
+    score = max(0, min(100, score))
+    return {
+        "score": score,
+        "counts": {k: len(v) for k, v in buckets.items()},
+        "totals": {"total": len(items), "completed": completed},
+        "penalty_exposure": penalty_exposure,
+        "buckets": buckets,
+    }
+
+
+DIGEST_SYSTEM = """You are a construction ops assistant. Write a concise weekly compliance digest (150-220 words, plain text) for a contractor owner. Use short paragraphs and one bullet block of top actions. Cover: overdue items, this-week deadlines, upcoming renewals, penalty exposure, next steps."""
+
+@api.get("/compliance/digest")
+async def compliance_digest(user: dict = Depends(get_current_user)):
+    dash = await compliance_dashboard(user)
+    items = await db.compliance.find({"owner_id": user["user_id"]}, {"_id": 0}).to_list(500)
+    ctx = {"score": dash["score"], "counts": dash["counts"], "penalty_exposure": dash["penalty_exposure"],
+           "overdue": dash["buckets"]["overdue"][:6], "critical": dash["buckets"]["critical"][:6],
+           "warning": dash["buckets"]["warning"][:6], "items": [{"title": it["title"], "category": it.get("category"), "due": it.get("due_date"), "status": it.get("status")} for it in items[:30]]}
+    prompt = json.dumps(ctx)[:3800]
+    text = await ai_text(DIGEST_SYSTEM, prompt)
+    return {"digest": text, "score": dash["score"], "penalty_exposure": dash["penalty_exposure"]}
 
 # ---------------------------------------------------------------- regulation feed
 
@@ -779,8 +929,22 @@ def _fetch_feed(query: str):
     return feedparser.parse(resp.content)
 
 @api.get("/feed")
-async def list_feed(user: dict = Depends(get_current_user)):
-    return await db.reg_feed.find({"owner_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(300)
+async def list_feed(region: str = "", category: str = "", user: dict = Depends(get_current_user)):
+    q: Dict[str, Any] = {"owner_id": user["user_id"]}
+    if category:
+        q["category"] = category
+    docs = await db.reg_feed.find(q, {"_id": 0}).sort("created_at", -1).to_list(300)
+    if region:
+        r = region.strip().lower()
+        def _match(d):
+            rv = (d.get("region") or "").lower()
+            if rv and (rv == r or r in rv or rv in r):
+                return True
+            # Fallback: match state/city inside title or summary text.
+            hay = ((d.get("title") or "") + " " + (d.get("summary") or "")).lower()
+            return r in hay
+        docs = [d for d in docs if _match(d)]
+    return docs
 
 @api.post("/feed")
 async def add_feed(body: FeedIn, user: dict = Depends(get_current_user)):
