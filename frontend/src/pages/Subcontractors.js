@@ -5,8 +5,9 @@ import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Handshake, Plus, Trash, ArrowLeft } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
+import { formatMoney, getCountry } from "@/lib/country";
 
-const fmt = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
 const TXN_TYPES = [
   { v: "payment", l: "Payment made" },
   { v: "advance", l: "Advance paid" },
@@ -20,6 +21,9 @@ const labelFor = (t) => TXN_TYPES.find((x) => x.v === t)?.l || t;
 
 export default function Subcontractors() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const fmt = (n) => formatMoney(n, user);
+  const country = getCountry(user);
   const [selected, setSelected] = useState(null);
   const [open, setOpen] = useState(false);
   const [txnOpen, setTxnOpen] = useState(false);
@@ -112,7 +116,7 @@ export default function Subcontractors() {
               <select data-testid="subtxn-type-select" className={inputCls} value={txn.type} onChange={(e) => setTxn({ ...txn, type: e.target.value })}>
                 {TXN_TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
               </select>
-              <input data-testid="subtxn-amount-input" className={inputCls} type="number" placeholder="Amount (₹)" value={txn.amount} onChange={(e) => setTxn({ ...txn, amount: e.target.value })} />
+              <input data-testid="subtxn-amount-input" className={inputCls} type="number" placeholder={`Amount (${country.symbol})`} value={txn.amount} onChange={(e) => setTxn({ ...txn, amount: e.target.value })} />
               <input className={inputCls} placeholder="Note (e.g. 2nd running bill)" value={txn.note} onChange={(e) => setTxn({ ...txn, note: e.target.value })} />
             </div>
             <DialogFooter><button data-testid="save-subtxn-button" disabled={!(parseFloat(txn.amount) > 0) || addTxn.isPending} onClick={() => addTxn.mutate()} className="bg-[#EA580C] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200 disabled:opacity-50">Record</button></DialogFooter>
@@ -148,7 +152,7 @@ export default function Subcontractors() {
                 </select>
                 <input className={inputCls} placeholder="Contact number" value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} />
                 <div className="grid grid-cols-2 gap-3">
-                  <input data-testid="sub-contract-input" className={inputCls} type="number" placeholder="Contract value (₹)" value={form.contract_value} onChange={(e) => setForm({ ...form, contract_value: e.target.value })} />
+                  <input data-testid="sub-contract-input" className={inputCls} type="number" placeholder={`Contract value (${country.symbol})`} value={form.contract_value} onChange={(e) => setForm({ ...form, contract_value: e.target.value })} />
                   <input data-testid="sub-retention-input" className={inputCls} type="number" placeholder="Retention %" value={form.retention_percent} onChange={(e) => setForm({ ...form, retention_percent: e.target.value })} />
                 </div>
               </div>

@@ -7,8 +7,9 @@ import { ShieldCheck, Plus, Sparkle, Warning, ClockCountdown, CurrencyInr, ListC
 import { FileUpload, Attachment } from "@/components/FileUpload";
 import { toast } from "sonner";
 import ExportMenu from "@/components/ExportMenu";
+import { useAuth } from "@/context/AuthContext";
+import { formatMoney, getCountry } from "@/lib/country";
 
-const CATS = ["permit", "license", "insurance", "registration", "safety", "tender", "labour", "gst", "municipal", "environment"];
 const STATUS_COLORS = { pending: "warning", in_progress: "accent", completed: "success" };
 const EMPTY_FORM = { title: "", category: "permit", due_date: "", expiry_date: "", document_text: "", attachments: [], project_ids: [], status: "pending" };
 
@@ -27,7 +28,7 @@ function daysUntil(dueStr) {
   return Math.floor((d - new Date()) / 86400000);
 }
 
-function ScoreCard({ dashboard }) {
+function ScoreCard({ dashboard, fmt }) {
   if (!dashboard) return null;
   const { score, counts, totals, penalty_exposure } = dashboard;
   const scoreColor = score >= 80 ? "#16A34A" : score >= 60 ? "#EA580C" : "#DC2626";
@@ -59,7 +60,7 @@ function ScoreCard({ dashboard }) {
             { key: "critical", label: "≤7 days", val: counts.critical, color: "text-[#EA580C]", testid: "count-critical" },
             { key: "warning", label: "8-30 days", val: counts.warning + counts.watch, color: "text-[#CA8A04]", testid: "count-warning" },
             { key: "ok", label: "Healthy", val: counts.ok, color: "text-[#16A34A]", testid: "count-ok" },
-            { key: "exposure", label: "Penalty exposure", val: `₹${Math.round(penalty_exposure).toLocaleString("en-IN")}`, color: "text-[#09090B]", testid: "penalty-exposure" },
+            { key: "exposure", label: "Penalty exposure", val: fmt(penalty_exposure), color: "text-[#09090B]", testid: "penalty-exposure" },
           ].map((s) => (
             <div key={s.key} data-testid={s.testid}>
               <p className="overline mb-1">{s.label}</p>
@@ -74,6 +75,10 @@ function ScoreCard({ dashboard }) {
 
 export default function Compliance() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const country = getCountry(user);
+  const fmt = (n) => formatMoney(n, user);
+  const CATS = country.complianceCategories;
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -241,7 +246,7 @@ export default function Compliance() {
         }
       />
 
-      <ScoreCard dashboard={dashboard} />
+      <ScoreCard dashboard={dashboard} fmt={fmt} />
 
       {items?.length === 0 ? (
         <div className="border border-[#E4E4E7] p-12 text-center"><ShieldCheck size={36} weight="duotone" className="mx-auto text-[#EA580C] mb-3" /><p className="text-[#71717A] text-sm">No compliance items yet. Add your permits/licenses, or open the Regulation Feed to track a live update.</p></div>
@@ -293,7 +298,7 @@ export default function Compliance() {
                   {(days !== null && days < 0) && (
                     c.penalty_estimate ? (
                       <button data-testid={`view-penalty-${c.id}`} onClick={() => setPenaltyActive(c)} className="flex items-center gap-1 text-xs font-semibold text-[#DC2626] hover:underline">
-                        <CurrencyInr size={11} weight="bold" /> Penalty ₹{Math.round(c.penalty_estimate.amount_max || c.penalty_estimate.amount_min || 0).toLocaleString("en-IN")}
+                        <CurrencyInr size={11} weight="bold" /> Penalty {fmt(c.penalty_estimate.amount_max || c.penalty_estimate.amount_min || 0)}
                       </button>
                     ) : (
                       <button data-testid={`penalty-${c.id}`} onClick={() => penalty.mutate(c.id)} disabled={penalty.isPending && penalty.variables === c.id} className="flex items-center gap-1 text-xs font-semibold border border-[#DC2626] text-[#DC2626] px-2 py-1 hover:bg-[#DC2626] hover:text-white transition-colors duration-200 disabled:opacity-50">
@@ -387,8 +392,8 @@ export default function Compliance() {
                 <div><p className="overline mb-1">Days overdue</p><p className="font-display font-bold text-lg">{penaltyActive.penalty_estimate.days_overdue}</p></div>
                 <div><p className="overline mb-1">Estimated fine</p>
                   <p className="font-display font-bold text-lg text-[#DC2626]">
-                    ₹{Math.round(penaltyActive.penalty_estimate.amount_min || 0).toLocaleString("en-IN")}
-                    {penaltyActive.penalty_estimate.amount_max && penaltyActive.penalty_estimate.amount_max !== penaltyActive.penalty_estimate.amount_min && ` – ₹${Math.round(penaltyActive.penalty_estimate.amount_max).toLocaleString("en-IN")}`}
+                    {fmt(penaltyActive.penalty_estimate.amount_min || 0)}
+                    {penaltyActive.penalty_estimate.amount_max && penaltyActive.penalty_estimate.amount_max !== penaltyActive.penalty_estimate.amount_min && ` – ${fmt(penaltyActive.penalty_estimate.amount_max)}`}
                   </p>
                 </div>
               </div>

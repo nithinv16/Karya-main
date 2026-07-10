@@ -275,13 +275,113 @@ class ProfileIn(BaseModel):
     company_name: str = ""
     role: str = ""
     default_client_phone: str = ""
+    country: str = "IN"  # IN | AE
+    language: str = "en"  # en | ar (RTL when 'ar' + country='AE')
+    ramadan_mode: bool = False  # 6h shifts + prayer breaks in attendance
+
+
+# ---------------- Localization / country context (India + UAE) --------------
+COUNTRY_META = {
+    "IN": {
+        "name": "India",
+        "currency_code": "INR",
+        "currency_symbol": "₹",
+        "locale": "en-IN",
+        "rate_types": ["daily", "weekly", "monthly", "contract", "sqft", "task", "milestone", "piece"],
+        "compliance_categories": [
+            "permit", "license", "insurance", "registration", "safety",
+            "tender", "labour", "gst", "municipal", "environment"
+        ],
+        "compliance_seed": [
+            {"title": "BOCW Cess Payment", "category": "labour", "note": "Building & Other Construction Workers Welfare Cess — 1% of construction cost, monthly."},
+            {"title": "GST Return (GSTR-1 / 3B)", "category": "gst", "note": "Monthly outward supplies + summary."},
+            {"title": "Labour License Renewal", "category": "license", "note": "State labour department, per project or annual."},
+            {"title": "Contract Labour Registration (CLRA)", "category": "labour", "note": "If ≥20 contract workers, register with the state labour commissioner."},
+            {"title": "Factories Act / Shops & Establishments", "category": "registration", "note": "State-level registration for the office/site."},
+            {"title": "ESIC / EPFO Compliance", "category": "labour", "note": "Monthly employee state insurance and provident fund filings."},
+        ],
+        "news_hl": "en-IN",
+        "news_gl": "IN",
+        "news_ceid": "IN:en",
+        "context_prompt": "You are advising a small/mid-size construction contractor operating in India. Reference Indian statutes: BOCW Act, Contract Labour (R&A) Act, Factories Act, ESI, EPF, GST, RERA, state labour laws, municipal PWD/CPWD tenders. Use INR (₹) for money. Cite typical Indian penalty ranges.",
+    },
+    "AE": {
+        "name": "United Arab Emirates",
+        "currency_code": "AED",
+        "currency_symbol": "AED",
+        "locale": "en-AE",
+        "rate_types": ["hourly", "daily", "weekly", "monthly", "contract", "sqm", "task", "milestone", "piece"],
+        "compliance_categories": [
+            "trade_license", "labour_card", "emirates_id", "visa",
+            "wps", "civil_defense", "municipality_noc", "tasheel",
+            "insurance", "safety", "environment", "tender"
+        ],
+        "compliance_seed": [
+            {"title": "DED Trade License Renewal", "category": "trade_license", "note": "Annual renewal via Department of Economic Development (Dubai) or equivalent authority in each emirate."},
+            {"title": "MOHRE Labour Cards", "category": "labour_card", "note": "Ministry of Human Resources & Emiratisation — issued/renewed per worker."},
+            {"title": "Emirates ID renewal — workforce", "category": "emirates_id", "note": "Federal Authority for Identity & Citizenship — verify every worker's ID validity."},
+            {"title": "Residence Visa expiry monitoring", "category": "visa", "note": "GDRFA (Dubai) / ICP — 30-day pre-alert per worker."},
+            {"title": "WPS (Wage Protection System)", "category": "wps", "note": "MOHRE WPS — monthly salary transfer via approved bank/exchange, on-time."},
+            {"title": "Civil Defense NOC (site fire safety)", "category": "civil_defense", "note": "Per project — required before commencement and at handover."},
+            {"title": "Municipality Building Permit / NOC", "category": "municipality_noc", "note": "Dubai Municipality / Abu Dhabi DMT — permit approval and inspections."},
+            {"title": "Tas'heel Service Center forms", "category": "tasheel", "note": "Labour contract, offer letters, and MOHRE submissions."},
+        ],
+        "news_hl": "en-AE",
+        "news_gl": "AE",
+        "news_ceid": "AE:en",
+        "context_prompt": "You are advising a small/mid-size construction contractor operating in the United Arab Emirates. Reference UAE regulations: MOHRE (labour ministry) rules, WPS (Wage Protection System), Emirates ID/GDRFA visa rules, DED trade license, Dubai/Abu Dhabi Municipality permits, Civil Defense NOC, Tas'heel forms, DIFC free zone rules where relevant. Use AED for money. Cite typical UAE fine ranges (e.g. WPS delay AED 5,000 per employee/month; expired labour card AED 500-1,000/worker; visa overstay AED 50/day).",
+    },
+}
+
+
+def user_country(user: dict) -> str:
+    """Return the country code for the current user, defaulting to India."""
+    c = (user or {}).get("country") or "IN"
+    return c if c in COUNTRY_META else "IN"
+
+
+def country_ctx(user_or_country) -> dict:
+    code = user_or_country if isinstance(user_or_country, str) else user_country(user_or_country)
+    return COUNTRY_META.get(code, COUNTRY_META["IN"])
+
+
+def money_str(amount, user_or_country) -> str:
+    m = country_ctx(user_or_country)
+    n = int(amount or 0)
+    if m["currency_code"] == "INR":
+        return f"₹{n:,}"
+    return f"AED {n:,}"
+
+
+@api.get("/config/countries")
+async def get_countries():
+    return {code: {"name": m["name"], "currency_code": m["currency_code"], "currency_symbol": m["currency_symbol"],
+                    "locale": m["locale"], "rate_types": m["rate_types"], "compliance_categories": m["compliance_categories"]}
+            for code, m in COUNTRY_META.items()}
 
 
 @api.put("/auth/profile")
 async def update_profile(body: ProfileIn, user: dict = Depends(get_current_user)):
     patch = body.model_dump()
+    if patch.get("country") not in COUNTRY_META:
+        patch["country"] = "IN"
     patch["profile_complete"] = bool(patch["name"].strip() and patch["phone"].strip())
+    prev = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": patch})
+    # First-time country selection seeds a country-appropriate compliance starter kit.
+    just_completed = (not prev.get("profile_complete")) and patch["profile_complete"]
+    if just_completed:
+        seed = country_ctx(patch["country"]).get("compliance_seed", [])
+        if seed and await db.compliance.count_documents({"owner_id": user["user_id"]}) == 0:
+            for s in seed:
+                await db.compliance.insert_one({
+                    "id": new_id(), "owner_id": user["user_id"], "title": s["title"], "category": s["category"],
+                    "due_date": "", "expiry_date": "", "project_ids": [], "status": "pending",
+                    "document_text": "", "attachments": [], "analysis": None, "renewal_plan": None,
+                    "penalty_estimate": None,
+                    "history": [{"action": "seeded", "at": now_iso(), "note": f"country={patch['country']}"}],
+                    "notes": s.get("note", ""), "created_at": now_iso(),
+                })
     updated = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
     return updated
 
@@ -785,24 +885,24 @@ async def delete_compliance(item_id: str, user: dict = Depends(get_current_user)
         raise HTTPException(status_code=404, detail="Item not found")
     return {"deleted": True}
 
-COMPLIANCE_SYSTEM = """You are a compliance analyst for Indian construction businesses (permits, licenses, BOCW, GST, labour laws, municipal approvals, tenders, insurance).
+COMPLIANCE_SYSTEM = """You are a construction compliance analyst. {country_context}
 Analyze the given compliance item/document and output JSON:
-{"summary": str, "what_changed": str, "who_is_affected": str, "deadline": str, "expiry_date": "YYYY-MM-DD or empty", "penalties": str,
- "actions_required": [str], "risk_level": "high"|"medium"|"low"}
-Be specific and practical for a small/mid contractor. If the document text is thin, infer from the title and category. If any date (validity/expiry/renewal) is present in the text, return it in expiry_date as ISO."""
+{{"summary": str, "what_changed": str, "who_is_affected": str, "deadline": str, "expiry_date": "YYYY-MM-DD or empty", "penalties": str,
+ "actions_required": [str], "risk_level": "high"|"medium"|"low"}}
+Be specific and practical. If the document text is thin, infer from the title and category. If any date (validity/expiry/renewal) is present in the text, return it in expiry_date as ISO."""
 
 @api.post("/compliance/{item_id}/analyze")
 async def analyze_compliance(item_id: str, user: dict = Depends(get_current_user)):
     item = await db.compliance.find_one({"id": item_id, "owner_id": user["user_id"]}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
+    ctx = country_ctx(user)
     prompt = (
         f"Title: {item['title']}\nCategory: {item['category']}\nDue date: {item.get('due_date') or 'unknown'}\n"
         f"Document text:\n{(item.get('document_text') or '')[:5000]}"
     )
-    analysis = await ai_json(COMPLIANCE_SYSTEM, prompt)
+    analysis = await ai_json(COMPLIANCE_SYSTEM.format(country_context=ctx["context_prompt"]), prompt)
     patch: Dict[str, Any] = {"analysis": analysis}
-    # If OCR/AI surfaced a real expiry date, backfill it (never overwrite an existing one).
     if analysis and analysis.get("expiry_date") and not item.get("expiry_date"):
         patch["expiry_date"] = analysis["expiry_date"]
         if not item.get("due_date"):
@@ -811,44 +911,50 @@ async def analyze_compliance(item_id: str, user: dict = Depends(get_current_user
     item.update(patch)
     return item
 
-RENEWAL_SYSTEM = """You are a compliance operations expert for Indian construction. Given a permit/license/registration item, output a JSON RENEWAL PLAN a small contractor can execute today:
-{"docs_needed": [str], "submission_office": str, "fee_estimate": str, "processing_time": str,
- "steps": [{"title": str, "detail": str, "done": false}], "portal_url": str}
-Steps must be atomic (1-3 lines each), sequenced, and specific to India + the item category. Include ~5-8 steps."""
+RENEWAL_SYSTEM = """You are a compliance operations expert for construction. {country_context}
+Given a permit/license/registration item, output a JSON RENEWAL PLAN a small contractor can execute today:
+{{"docs_needed": [str], "submission_office": str, "fee_estimate": str, "processing_time": str,
+ "steps": [{{"title": str, "detail": str, "done": false}}], "portal_url": str}}
+Steps must be atomic (1-3 lines each), sequenced, and specific to the country + the item category. Include ~5-8 steps."""
 
 @api.post("/compliance/{item_id}/renew")
 async def compliance_renew_plan(item_id: str, user: dict = Depends(get_current_user)):
     item = await db.compliance.find_one({"id": item_id, "owner_id": user["user_id"]}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
+    ctx = country_ctx(user)
     prompt = (
         f"Title: {item['title']}\nCategory: {item['category']}\nDue: {item.get('due_date') or 'unknown'}\n"
         f"Existing analysis (may be empty): {json.dumps(item.get('analysis') or {})[:1200]}"
     )
-    plan = await ai_json(RENEWAL_SYSTEM, prompt)
+    plan = await ai_json(RENEWAL_SYSTEM.format(country_context=ctx["context_prompt"]), prompt)
     await db.compliance.update_one({"id": item_id}, {"$set": {"renewal_plan": plan, "status": "in_progress"}, "$push": {"history": {"action": "renewal_plan_generated", "at": now_iso(), "note": ""}}})
     item["renewal_plan"] = plan
     item["status"] = "in_progress"
     return item
 
-PENALTY_SYSTEM = """You compute late-compliance penalties for Indian construction. Given an item + days-overdue, output JSON:
-{"currency": "INR", "amount_min": number, "amount_max": number, "basis": str,
- "escalation": [{"days_after_due": int, "penalty": str}], "worst_case": str}
-Be concrete: cite typical BOCW/GST/labour/factories act penalty ranges. If uncertain, give a wide sensible range and mark basis as "typical range – verify with authority"."""
+PENALTY_SYSTEM = """You compute late-compliance penalties for construction. {country_context}
+Given an item + days-overdue, output JSON:
+{{"currency": str, "amount_min": number, "amount_max": number, "basis": str,
+ "escalation": [{{"days_after_due": int, "penalty": str}}], "worst_case": str}}
+Be concrete: cite typical penalty ranges relevant to the country and category. Use the country currency ({currency_code}). If uncertain, give a wide sensible range and mark basis as "typical range – verify with authority"."""
 
 @api.post("/compliance/{item_id}/penalty")
 async def compliance_penalty(item_id: str, user: dict = Depends(get_current_user)):
     item = await db.compliance.find_one({"id": item_id, "owner_id": user["user_id"]}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
+    ctx = country_ctx(user)
     bucket, days = _compliance_urgency(item.get("due_date") or item.get("expiry_date") or "")
     days_overdue = -days if (days is not None and days < 0) else 0
     prompt = (
         f"Title: {item['title']}\nCategory: {item['category']}\nDays overdue: {days_overdue}\n"
-        f"Region: India (assume worst-case central + state overlap unless obvious)."
+        f"Country: {ctx['name']}"
     )
-    est = await ai_json(PENALTY_SYSTEM, prompt)
+    est = await ai_json(PENALTY_SYSTEM.format(country_context=ctx["context_prompt"], currency_code=ctx["currency_code"]), prompt)
     est["days_overdue"] = days_overdue
+    if "currency" not in est or not est.get("currency"):
+        est["currency"] = ctx["currency_code"]
     await db.compliance.update_one({"id": item_id}, {"$set": {"penalty_estimate": est}, "$push": {"history": {"action": "penalty_estimated", "at": now_iso(), "note": ""}}})
     item["penalty_estimate"] = est
     return item
@@ -909,21 +1015,39 @@ class FeedIn(BaseModel):
     region: str = ""
     summary: str = ""
 
-FEED_QUERIES = [
-    ("GST construction CBIC notification India", "gst"),
-    ("BOCW cess construction workers welfare India", "labour"),
-    ("labour ministry wages construction notification India", "labour"),
-    ("construction site safety scaffolding NBC India", "safety"),
-    ("municipal corporation building bylaws permit India", "municipal"),
-    ("CPWD tender notice construction India", "tender"),
-    ("PWD eProcurement tender construction India", "tender"),
-    ("environment clearance construction demolition waste India", "environment"),
-    ("building plan approval rules India", "municipal"),
-    ("minimum wages notification construction India", "labour"),
-]
+FEED_QUERIES_BY_COUNTRY = {
+    "IN": [
+        ("GST construction CBIC notification India", "gst"),
+        ("BOCW cess construction workers welfare India", "labour"),
+        ("labour ministry wages construction notification India", "labour"),
+        ("construction site safety scaffolding NBC India", "safety"),
+        ("municipal corporation building bylaws permit India", "municipal"),
+        ("CPWD tender notice construction India", "tender"),
+        ("PWD eProcurement tender construction India", "tender"),
+        ("environment clearance construction demolition waste India", "environment"),
+        ("building plan approval rules India", "municipal"),
+        ("minimum wages notification construction India", "labour"),
+    ],
+    "AE": [
+        ("MOHRE UAE labour ministry construction rules", "labour_card"),
+        ("WPS Wage Protection System UAE construction", "wps"),
+        ("Emirates ID renewal residents workers UAE", "emirates_id"),
+        ("GDRFA ICP UAE residence visa construction workers", "visa"),
+        ("Dubai Municipality building permit approval", "municipality_noc"),
+        ("Abu Dhabi Municipality DMT construction permit", "municipality_noc"),
+        ("UAE Civil Defense NOC construction fire safety", "civil_defense"),
+        ("DED trade license renewal UAE construction", "trade_license"),
+        ("Dubai construction tender procurement", "tender"),
+        ("UAE construction site safety OSH Trakhees", "safety"),
+    ],
+}
+# Kept for any legacy references.
+FEED_QUERIES = FEED_QUERIES_BY_COUNTRY["IN"]
 
-def _fetch_feed(query: str):
-    url = f"https://news.google.com/rss/search?q={quote(query)}&hl=en-IN&gl=IN&ceid=IN:en"
+def _fetch_feed(query: str, country: str = "IN"):
+    ctx = COUNTRY_META.get(country, COUNTRY_META["IN"])
+    url = (f"https://news.google.com/rss/search?q={quote(query)}"
+           f"&hl={ctx['news_hl']}&gl={ctx['news_gl']}&ceid={ctx['news_ceid']}")
     resp = http_requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
     resp.raise_for_status()
     return feedparser.parse(resp.content)
@@ -959,10 +1083,13 @@ async def add_feed(body: FeedIn, user: dict = Depends(get_current_user)):
 @api.post("/feed/fetch")
 async def fetch_feed(user: dict = Depends(get_current_user)):
     uid = user["user_id"]
+    country = user_country(user)
+    ctx = country_ctx(country)
+    queries = FEED_QUERIES_BY_COUNTRY.get(country, FEED_QUERIES_BY_COUNTRY["IN"])
     existing = set(d["url"] for d in await db.reg_feed.find({"owner_id": uid, "url": {"$ne": None}}, {"_id": 0, "url": 1}).to_list(2000))
-    results = await asyncio.gather(*[asyncio.to_thread(_fetch_feed, q) for q, _ in FEED_QUERIES], return_exceptions=True)
+    results = await asyncio.gather(*[asyncio.to_thread(_fetch_feed, q, country) for q, _ in queries], return_exceptions=True)
     added = 0
-    for (query, category), parsed in zip(FEED_QUERIES, results):
+    for (query, category), parsed in zip(queries, results):
         if isinstance(parsed, Exception):
             logger.warning(f"Feed query failed [{query}]: {parsed}")
             continue
@@ -985,8 +1112,9 @@ async def fetch_feed(user: dict = Depends(get_current_user)):
                 pub = today_str()
             summary = re.sub(r"<[^>]+>", "", entry.get("summary", "")).strip()[:400] or title
             await db.reg_feed.insert_one({
-                "id": new_id(), "owner_id": uid, "title": title[:220], "source": publisher or "Google News (India)",
-                "category": category, "region": "India", "summary": summary,
+                "id": new_id(), "owner_id": uid, "title": title[:220],
+                "source": publisher or f"Google News ({ctx['name']})",
+                "category": category, "region": ctx["name"], "summary": summary,
                 "published_date": pub, "url": link, "verified": True, "impact": None, "created_at": now_iso(),
             })
             added += 1
@@ -1389,8 +1517,14 @@ from exports import build_pdf, build_docx, build_xlsx, Section as ExportSection,
 from fastapi.responses import Response
 
 
-def _rupees(n) -> str:
-    return f"Rs. {int(n or 0):,}"
+def money(n) -> str:
+    """Country-agnostic fallback; overridden per-request inside export endpoints."""
+    return f"₹{int(n or 0):,}"
+
+
+def _money_fn(user: dict):
+    """Return a country-aware money formatter closure for a request."""
+    return lambda n: money_str(n, user)
 
 
 def _export_response(fmt: str, data: bytes, filename_stem: str) -> Response:
@@ -1406,6 +1540,7 @@ def _export_response(fmt: str, data: bytes, filename_stem: str) -> Response:
 
 @api.get("/reports/{report_id}/export")
 async def export_daily_report(report_id: str, format: str = "pdf", user: dict = Depends(get_current_user)):
+    money = _money_fn(user)
     rec = await db.daily_reports.find_one({"id": report_id, "owner_id": user["user_id"]}, {"_id": 0})
     if not rec:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -1444,7 +1579,7 @@ async def export_daily_report(report_id: str, format: str = "pdf", user: dict = 
         heading="Attendance & Spend (this day)",
         table=[["Metric", "Value"],
                ["Workers present", str(present_today)],
-               ["Wage cost", _rupees(wage_today)],
+               ["Wage cost", money(wage_today)],
                ["Attendance entries", str(len(att_docs))]],
     ))
     if c.get("materials_used"):
@@ -1492,6 +1627,7 @@ async def export_daily_report(report_id: str, format: str = "pdf", user: dict = 
 
 @api.get("/workers/{worker_id}/ledger/export")
 async def export_worker_ledger(worker_id: str, format: str = "pdf", user: dict = Depends(get_current_user)):
+    money = _money_fn(user)
     worker = await db.workers.find_one({"id": worker_id, "owner_id": user["user_id"]}, {"_id": 0})
     if not worker:
         raise HTTPException(status_code=404, detail="Worker not found")
@@ -1504,18 +1640,18 @@ async def export_worker_ledger(worker_id: str, format: str = "pdf", user: dict =
             project_name = p["name"]
 
     title = f"Settlement Ledger — {worker['name']}"
-    subtitle = f"{worker.get('role', '')} · Rs.{int(worker.get('rate') or 0):,}/{worker.get('rate_type', '')} · Project: {project_name}"
+    subtitle = f"{worker.get('role', '')} · {money(worker.get('rate') or 0)}/{worker.get('rate_type', '')} · Project: {project_name}"
 
     summary_table = [
         ["Metric", "Amount"],
-        ["Earned", _rupees(s["earned"])],
-        ["Advances", _rupees(s["advances"])],
-        ["Deductions", _rupees(s["deductions"])],
-        ["Paid", _rupees(s["paid"])],
-        ["Net Payable", _rupees(s["balance"])],
+        ["Earned", money(s["earned"])],
+        ["Advances", money(s["advances"])],
+        ["Deductions", money(s["deductions"])],
+        ["Paid", money(s["paid"])],
+        ["Net Payable", money(s["balance"])],
     ]
     txn_table = [["Date", "Type", "Amount", "Note"]] + [
-        [t.get("date", ""), t.get("type", ""), _rupees(t.get("amount", 0)), t.get("note", "")]
+        [t.get("date", ""), t.get("type", ""), money(t.get("amount", 0)), t.get("note", "")]
         for t in txns
     ]
     sections = [
@@ -1538,6 +1674,7 @@ async def export_worker_ledger(worker_id: str, format: str = "pdf", user: dict =
 @api.get("/payroll/export")
 async def export_settlements(format: str = "xlsx", user: dict = Depends(get_current_user)):
     """Full settlements table across every worker (multi-sheet xlsx / summary table pdf/docx)."""
+    money = _money_fn(user)
     uid = user["user_id"]
     workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     txns = await db.transactions.find({"owner_id": uid}, {"_id": 0}).to_list(20000)
@@ -1554,11 +1691,11 @@ async def export_settlements(format: str = "xlsx", user: dict = Depends(get_curr
             w.get("role", ""),
             pmap.get(w.get("project_id"), "—"),
             f"Rs.{int(w.get('rate') or 0):,}/{w.get('rate_type', '')}",
-            _rupees(s["earned"]),
-            _rupees(s["advances"]),
-            _rupees(s["deductions"]),
-            _rupees(s["paid"]),
-            _rupees(s["balance"]),
+            money(s["earned"]),
+            money(s["advances"]),
+            money(s["deductions"]),
+            money(s["paid"]),
+            money(s["balance"]),
         ])
     title = "Payroll Settlements"
     subtitle = f"{len(workers)} workers · exported {today_str()}"
@@ -1571,7 +1708,7 @@ async def export_settlements(format: str = "xlsx", user: dict = Depends(get_curr
                 t.get("date", ""),
                 wmap.get(t.get("worker_id"), "?"),
                 t.get("type", ""),
-                _rupees(t.get("amount", 0)),
+                money(t.get("amount", 0)),
                 t.get("note", ""),
             ])
         data = build_xlsx(title, [
@@ -1587,6 +1724,7 @@ async def export_settlements(format: str = "xlsx", user: dict = Depends(get_curr
 
 @api.get("/insights/export")
 async def export_insights(format: str = "pdf", user: dict = Depends(get_current_user)):
+    money = _money_fn(user)
     data = await insights(user)
     briefing = await insights_briefing(user)
     preds = data.get("predictions", {}) or {}
@@ -1599,11 +1737,11 @@ async def export_insights(format: str = "pdf", user: dict = Depends(get_current_
 
     sc_rows = [["Subcontractor", "Trade", "Score", "Grade", "Deductions", "Pending"]]
     for s in data.get("subcontractor_scorecards", []) or []:
-        sc_rows.append([s.get("name", ""), s.get("trade", ""), s.get("score", 0), s.get("rating", ""), _rupees(s.get("deductions", 0)), _rupees(s.get("pending", 0))])
+        sc_rows.append([s.get("name", ""), s.get("trade", ""), s.get("score", 0), s.get("rating", ""), money(s.get("deductions", 0)), money(s.get("pending", 0))])
 
     burn_rows = [["Project", "Labour Spend", "Budget", "% of Budget"]]
     for p in data.get("project_overrun", []) or []:
-        burn_rows.append([p.get("name", ""), _rupees(p.get("spend", 0)), _rupees(p.get("budget", 0)), f"{p.get('labour_pct_of_budget', 0)}%"])
+        burn_rows.append([p.get("name", ""), money(p.get("spend", 0)), money(p.get("budget", 0)), f"{p.get('labour_pct_of_budget', 0)}%"])
 
     ai_lines = [l for l in (briefing.get("ai_summary") or "").split("\n") if l.strip()]
 

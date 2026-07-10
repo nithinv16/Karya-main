@@ -5,8 +5,9 @@ import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Plus, Trash, UsersThree, ShieldCheck, Check, Buildings, PencilSimple, MapPin, User } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
+import { formatMoney, getCountry } from "@/lib/country";
 
-const RATE_TYPES = ["daily", "weekly", "monthly", "contract", "sqft", "task", "milestone", "piece"];
 const ONBOARDING = [
   { key: "id_collected", label: "ID / Aadhaar collected" },
   { key: "contract_signed", label: "Work agreement signed" },
@@ -20,6 +21,10 @@ const EMPTY_PROJECT = { name: "", location: "", client: "", client_phone: "", bu
 
 export default function Workforce() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const country = getCountry(user);
+  const RATE_TYPES = country.rateTypes;
+  const fmt = (n) => formatMoney(n, user);
   const [open, setOpen] = useState(false);
   const [projOpen, setProjOpen] = useState(false);
   const [editingProject, setEditingProject] = useState(null); // holds project object when editing, null when creating
@@ -101,7 +106,7 @@ export default function Workforce() {
                   <input className={inputCls} placeholder="Location" value={proj.location} onChange={(e) => setProj({ ...proj, location: e.target.value })} />
                   <input className={inputCls} placeholder="Client name" value={proj.client} onChange={(e) => setProj({ ...proj, client: e.target.value })} />
                   <input data-testid="project-client-phone-input" className={inputCls} placeholder="Client WhatsApp (+91…)" value={proj.client_phone} onChange={(e) => setProj({ ...proj, client_phone: e.target.value })} />
-                  <input className={inputCls} placeholder="Budget (₹)" type="number" value={proj.budget} onChange={(e) => setProj({ ...proj, budget: e.target.value })} />
+                  <input className={inputCls} placeholder={`Budget (${country.symbol})`} type="number" value={proj.budget} onChange={(e) => setProj({ ...proj, budget: e.target.value })} />
                 </div>
                 <DialogFooter>
                   <button data-testid="save-project-button" disabled={!proj.name || saveProject.isPending} onClick={() => saveProject.mutate()} className="bg-[#EA580C] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200 disabled:opacity-50">
@@ -124,7 +129,7 @@ export default function Workforce() {
                     <input className={inputCls} placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <input data-testid="worker-rate-input" className={inputCls} type="number" placeholder="Rate (₹)" value={form.rate} onChange={(e) => setForm({ ...form, rate: e.target.value })} />
+                    <input data-testid="worker-rate-input" className={inputCls} type="number" placeholder={`Rate (${country.symbol})`} value={form.rate} onChange={(e) => setForm({ ...form, rate: e.target.value })} />
                     <select data-testid="worker-ratetype-select" className={inputCls} value={form.rate_type} onChange={(e) => setForm({ ...form, rate_type: e.target.value })}>
                       {RATE_TYPES.map((r) => <option key={r} value={r}>{r}</option>)}
                     </select>
@@ -183,7 +188,7 @@ export default function Workforce() {
                 {p.client && <p className="text-xs text-[#3f3f46] flex items-center gap-1"><User size={12} weight="bold" />{p.client}</p>}
                 <div className="flex items-center justify-between mt-1 pt-2 border-t border-[#F4F4F5]">
                   <Badge tone="accent">{workersInProject(p.id)} worker{workersInProject(p.id) === 1 ? "" : "s"}</Badge>
-                  {p.budget > 0 && <span className="text-xs font-mono text-[#71717A]">Budget: ₹{Number(p.budget).toLocaleString("en-IN")}</span>}
+                  {p.budget > 0 && <span className="text-xs font-mono text-[#71717A]">Budget: {fmt(p.budget)}</span>}
                 </div>
               </div>
             ))}
@@ -211,7 +216,7 @@ export default function Workforce() {
                 <tr key={w.id} data-testid={`worker-row-${w.id}`} className="border-b border-[#E4E4E7] hover:bg-[#FFF7ED] transition-colors duration-200">
                   <td className="px-4 py-3 font-semibold">{w.name}</td>
                   <td className="px-4 py-3 text-[#71717A]">{w.role}</td>
-                  <td className="px-4 py-3 font-mono">₹{w.rate?.toLocaleString("en-IN")} <span className="text-[#71717A]">/{w.rate_type}</span></td>
+                  <td className="px-4 py-3 font-mono">{fmt(w.rate)} <span className="text-[#71717A]">/{w.rate_type}</span></td>
                   <td className="px-4 py-3"><Badge tone="accent">{pname(w.project_id)}</Badge></td>
                   <td className="px-4 py-3">
                     <button

@@ -3,6 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { CheckCircle, WarningCircle, FloppyDisk, PencilSimple } from "@phosphor-icons/react";
+import { COUNTRIES } from "@/lib/country";
 
 const ROLES = ["Contractor", "Builder / Developer", "MEP", "Civil", "Interiors / Fit-out", "Facility Maintenance", "Other"];
 const REQUIRED = ["name", "phone"];
@@ -17,6 +18,7 @@ export default function Profile() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     name: "", phone: "", company_name: "", address: "", role: "", default_client_phone: "",
+    country: "IN", language: "en", ramadan_mode: false,
   });
   const [saving, setSaving] = useState(false);
 
@@ -29,6 +31,9 @@ export default function Profile() {
         address: user.address || "",
         role: user.role || "",
         default_client_phone: user.default_client_phone || "",
+        country: user.country || "IN",
+        language: user.language || "en",
+        ramadan_mode: !!user.ramadan_mode,
       });
     }
   }, [user]);
@@ -56,6 +61,7 @@ export default function Profile() {
     setForm({
       name: user?.name || "", phone: user?.phone || "", company_name: user?.company_name || "",
       address: user?.address || "", role: user?.role || "", default_client_phone: user?.default_client_phone || "",
+      country: user?.country || "IN", language: user?.language || "en", ramadan_mode: !!user?.ramadan_mode,
     });
     setEditing(false);
   };
@@ -148,6 +154,43 @@ export default function Profile() {
             <label className={labelCls}>Office address</label>
             <textarea data-testid="profile-address" className={inputCls + " min-h-20"} value={form.address} onChange={onChange("address")} placeholder="Street, city, state, PIN" disabled={disabled} />
           </div>
+
+          <div className="sm:col-span-2 pt-2">
+            <label className={labelCls}>Country / region</label>
+            <div className="grid grid-cols-2 gap-2 mt-1" data-testid="profile-country-selector">
+              {Object.values(COUNTRIES).map((c) => (
+                <button
+                  key={c.code}
+                  type="button"
+                  data-testid={`profile-country-${c.code}`}
+                  disabled={disabled}
+                  onClick={() => setForm((f) => ({ ...f, country: c.code }))}
+                  className={`flex items-center gap-3 px-4 py-2.5 border-2 transition-colors duration-200 text-left disabled:opacity-60 ${
+                    form.country === c.code ? "border-[#EA580C] bg-[#FFF7ED]" : "border-[#E4E4E7] bg-white hover:border-[#09090B]"
+                  }`}
+                >
+                  <span className="text-xl leading-none">{c.flag}</span>
+                  <div className="min-w-0">
+                    <p className="font-display font-bold text-sm">{c.name}</p>
+                    <p className="text-[11px] text-[#71717A]">{c.currency} · {c.dial}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <p className={hintCls}>Switching country changes your currency, compliance categories and regulation feed sources.</p>
+          </div>
+
+          {form.country === "AE" && (
+            <div className="sm:col-span-2">
+              <label className={`flex items-center gap-3 border-2 p-3 transition-colors duration-200 ${disabled ? "border-[#E4E4E7] bg-[#FAFAFA]" : "border-[#E4E4E7] hover:border-[#EA580C] cursor-pointer"}`} data-testid="profile-ramadan-toggle">
+                <input type="checkbox" disabled={disabled} checked={form.ramadan_mode} onChange={(e) => setForm({ ...form, ramadan_mode: e.target.checked })} className="w-4 h-4 accent-[#EA580C]" />
+                <div>
+                  <p className="text-sm font-semibold">Ramadan-adjusted work hours</p>
+                  <p className={hintCls}>Reduces default shift to 6 hours and factors prayer breaks into attendance during Ramadan.</p>
+                </div>
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-3 pt-2">

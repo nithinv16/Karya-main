@@ -7,11 +7,14 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { Warning, TrendUp, Buildings, Handshake, UsersThree, Broadcast } from "@phosphor-icons/react";
-
-const fmt = (n) => "₹" + (n || 0).toLocaleString("en-IN");
+import { useAuth } from "@/context/AuthContext";
+import { formatMoney, getCountry } from "@/lib/country";
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const fmt = (n) => formatMoney(n, user);
+  const country = getCountry(user);
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard"],
     queryFn: async () => (await api.get("/dashboard/stats")).data,
@@ -75,7 +78,7 @@ export default function Dashboard() {
                   <XAxis dataKey="date" tick={{ fontSize: 12, fill: "#71717A" }} />
                   <YAxis tick={{ fontSize: 12, fill: "#71717A" }} />
                   <Tooltip contentStyle={{ borderRadius: 0, border: "1px solid #09090B", fontSize: 12 }} />
-                  <Line type="monotone" dataKey="cost" stroke="#EA580C" strokeWidth={2.5} dot={false} name="Cost ₹" />
+                  <Line type="monotone" dataKey="cost" stroke="#EA580C" strokeWidth={2.5} dot={false} name={`Cost (${country.symbol})`} />
                   <Line type="monotone" dataKey="present" stroke="#09090B" strokeWidth={1.5} dot={false} name="Present" />
                 </LineChart>
               </ResponsiveContainer>
@@ -117,7 +120,7 @@ export default function Dashboard() {
                   <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#71717A" }} />
                   <YAxis tick={{ fontSize: 12, fill: "#71717A" }} />
                   <Tooltip contentStyle={{ borderRadius: 0, border: "1px solid #09090B", fontSize: 12 }} />
-                  <Bar dataKey="spend" fill="#EA580C" name="Spend ₹" />
+                  <Bar dataKey="spend" fill="#EA580C" name={`Spend (${country.symbol})`} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

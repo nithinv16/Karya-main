@@ -4,8 +4,9 @@ import api from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { TrendUp, Warning, Handshake, Sparkle, UsersThree, CurrencyInr, ClockCountdown } from "@phosphor-icons/react";
 import ExportMenu from "@/components/ExportMenu";
+import { useAuth } from "@/context/AuthContext";
+import { formatMoney } from "@/lib/country";
 
-const fmt = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
 const levelTone = (l) => (l === "high" ? "critical" : l === "medium" ? "warning" : "success");
 const ratingTone = (r) => (r === "A" ? "success" : r === "B" ? "warning" : "critical");
 
@@ -16,6 +17,8 @@ const PRED_META = {
 };
 
 export default function Insights() {
+  const { user } = useAuth();
+  const fmt = (n) => formatMoney(n, user);
   const { data, isLoading } = useQuery({ queryKey: ["insights"], queryFn: async () => (await api.get("/insights")).data });
   const briefing = useQuery({ queryKey: ["insights-briefing"], queryFn: async () => (await api.get("/insights/briefing")).data });
 

@@ -6,13 +6,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Money, Plus, ArrowLeft } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import ExportMenu from "@/components/ExportMenu";
+import { useAuth } from "@/context/AuthContext";
+import { formatMoney, getCountry } from "@/lib/country";
 
-const fmt = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
 const TXN_TYPES = ["payment", "advance", "bonus", "deduction", "food", "accommodation", "transport", "penalty", "wage"];
 const toneFor = (t) => (["payment", "wage", "bonus"].includes(t) ? "success" : t === "advance" ? "warning" : "critical");
 
 export default function Payroll() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const fmt = (n) => formatMoney(n, user);
+  const country = getCountry(user);
   const [selected, setSelected] = useState(null);
   const [open, setOpen] = useState(false);
   const [txn, setTxn] = useState({ type: "payment", amount: "", note: "" });
@@ -51,7 +55,7 @@ export default function Payroll() {
         <PageHeader
           overline="Settlement Ledger"
           title={selected.name}
-          desc={`${selected.role} · ₹${selected.rate?.toLocaleString("en-IN")}/${selected.rate_type}`}
+          desc={`${selected.role} · ${fmt(selected.rate)}/${selected.rate_type}`}
           action={
             <div className="flex flex-wrap gap-2">
               <ExportMenu
@@ -99,7 +103,7 @@ export default function Payroll() {
               <select data-testid="txn-type-select" className={inputCls} value={txn.type} onChange={(e) => setTxn({ ...txn, type: e.target.value })}>
                 {TXN_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
-              <input data-testid="txn-amount-input" className={inputCls} type="number" placeholder="Amount (₹)" value={txn.amount} onChange={(e) => setTxn({ ...txn, amount: e.target.value })} />
+              <input data-testid="txn-amount-input" className={inputCls} type="number" placeholder={`Amount (${country.symbol})`} value={txn.amount} onChange={(e) => setTxn({ ...txn, amount: e.target.value })} />
               <input className={inputCls} placeholder="Note (optional)" value={txn.note} onChange={(e) => setTxn({ ...txn, note: e.target.value })} />
             </div>
             <DialogFooter>
@@ -141,7 +145,7 @@ export default function Payroll() {
                   <tr key={w.id} data-testid={`settlement-row-${w.id}`} onClick={() => setSelected(w)} className="border-b border-[#E4E4E7] hover:bg-[#FFF7ED] cursor-pointer transition-colors duration-200">
                     <td className="px-4 py-3 font-semibold">{w.name}</td>
                     <td className="px-4 py-3 text-[#71717A]">{w.role}</td>
-                    <td className="px-4 py-3 font-mono">₹{w.rate?.toLocaleString("en-IN")}/{w.rate_type}</td>
+                    <td className="px-4 py-3 font-mono">{fmt(w.rate)}/{w.rate_type}</td>
                     <td className="px-4 py-3 font-mono font-bold text-[#EA580C]">{fmt(bal)}</td>
                     <td className="px-4 py-3 text-right text-xs font-semibold text-[#71717A]">Open ledger →</td>
                   </tr>
