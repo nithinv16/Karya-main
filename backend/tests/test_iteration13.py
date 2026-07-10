@@ -137,7 +137,8 @@ class TestReportsRouter:
         # Create a report with no project (so no client_phone) — but the test user has default_client_phone
         # so we temporarily unset it via a separate report path: use a project without client_phone
         # Insert a bare project
-        import pymongo, os as _os
+        import pymongo
+        import os as _os
         mongo = pymongo.MongoClient(_os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
         db = mongo[_os.environ.get("DB_NAME", "test_database")]
         db.projects.update_one(

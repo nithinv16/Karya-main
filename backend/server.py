@@ -503,7 +503,8 @@ async def download_file(
     # Path 1: valid HMAC-signed URL (used by Twilio to fetch media). No auth needed.
     if sig and exp:
         import time
-        if exp > int(time.time()) and sig == sign_file_path(path, exp):
+        import hmac as _hmac
+        if exp > int(time.time()) and _hmac.compare_digest(sig, sign_file_path(path, exp)):
             rec = await db.files.find_one({"path": path, "is_deleted": False}, {"_id": 0})
             if rec:
                 data, ct = await asyncio.to_thread(get_object, path)
