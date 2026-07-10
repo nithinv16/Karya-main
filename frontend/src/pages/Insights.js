@@ -1,8 +1,9 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
-import { TrendUp, Warning, Handshake, Sparkle, UsersThree, CurrencyInr, ClockCountdown } from "@phosphor-icons/react";
+import { TrendUp, Warning, Handshake, Sparkle, UsersThree, CurrencyInr, ClockCountdown, Buildings } from "@phosphor-icons/react";
 import ExportMenu from "@/components/ExportMenu";
 import { useAuth } from "@/context/AuthContext";
 import { formatMoney } from "@/lib/country";
@@ -18,9 +19,15 @@ const PRED_META = {
 
 export default function Insights() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const fmt = (n) => formatMoney(n, user);
   const { data, isLoading } = useQuery({ queryKey: ["insights"], queryFn: async () => (await api.get("/insights")).data });
-  const briefing = useQuery({ queryKey: ["insights-briefing"], queryFn: async () => (await api.get("/insights/briefing")).data });
+  const hasData = !!data?.has_data;
+  const briefing = useQuery({
+    queryKey: ["insights-briefing"],
+    queryFn: async () => (await api.get("/insights/briefing")).data,
+    enabled: hasData,
+  });
 
   if (isLoading) return <Spinner />;
   const preds = data?.predictions || {};
@@ -34,15 +41,35 @@ export default function Insights() {
         title="Predictive Insights"
         desc="Early-warning signals across labour, cost and schedule — plus AI-scored subcontractor performance, so you act before problems compound."
         action={
-          <ExportMenu
-            endpoint="/insights/export"
-            filename="Predictive Insights"
-            label="Export insights"
-            testId="insights-export-menu"
-          />
+          hasData ? (
+            <ExportMenu
+              endpoint="/insights/export"
+              filename="Predictive Insights"
+              label="Export insights"
+              testId="insights-export-menu"
+            />
+          ) : null
         }
       />
 
+      {!hasData ? (
+        <div data-testid="insights-empty" className="border border-[#E4E4E7] p-12 text-center">
+          <Sparkle size={40} weight="duotone" className="mx-auto text-[#EA580C] mb-4" />
+          <h3 className="font-display font-bold text-xl mb-2">Nothing to predict yet</h3>
+          <p className="text-[#71717A] text-sm max-w-md mx-auto mb-6">
+            Add projects, workers, attendance and transactions to unlock live risk signals across labour, cost and schedule.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button data-testid="insights-cta-workforce" onClick={() => navigate("/workforce")} className="flex items-center gap-2 bg-[#EA580C] text-white px-5 py-3 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200">
+              <UsersThree size={16} weight="fill" /> Add projects &amp; workers
+            </button>
+            <button data-testid="insights-cta-subs" onClick={() => navigate("/subcontractors")} className="flex items-center gap-2 border-2 border-[#09090B] px-5 py-3 text-sm font-semibold hover:bg-[#09090B] hover:text-white transition-colors duration-200">
+              <Handshake size={16} weight="bold" /> Add subcontractors
+            </button>
+          </div>
+        </div>
+      ) : (
+      <>
       {/* Risk predictions */}
       <div className="grid md:grid-cols-3 gap-px bg-[#E4E4E7] border border-[#E4E4E7] mb-8" data-testid="predictions">
         {["labour_shortage", "cost_overrun", "delay_risk"].map((k) => {
@@ -151,6 +178,8 @@ export default function Insights() {
             </table>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

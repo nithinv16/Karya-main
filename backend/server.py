@@ -51,9 +51,12 @@ if not BACKEND_PUBLIC_URL:
             break
 FILE_URL_SIGNING_KEY = os.environ.get("FILE_URL_SIGNING_KEY", EMERGENT_LLM_KEY)  # stable per-env secret
 
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_WHATSAPP_FROM = os.environ.get("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+# Empty env var must NOT override the sandbox default — os.environ.get("X", "default")
+# returns "" (not the default) when X="" is present. So we normalise here.
+TWILIO_WHATSAPP_FROM = (os.environ.get("TWILIO_WHATSAPP_FROM") or "").strip() or "whatsapp:+14155238886"
+TWILIO_VERIFY_SERVICE_SID = os.environ.get("TWILIO_VERIFY_SERVICE_SID", "").strip()
 
 def _twilio_client():
     if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
@@ -385,6 +388,89 @@ async def update_profile(body: ProfileIn, user: dict = Depends(get_current_user)
                 })
     updated = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
     return updated
+
+
+# ---------------------------------------------------------------- phone verification (Twilio Verify)
+
+_E164 = re.compile(r"^\+[1-9]\d{7,14}$")
+
+def _normalize_phone(p: str) -> str:
+    if not p:
+        return ""
+    s = "".join(ch for ch in p.strip() if ch.isdigit() or ch == "+")
+    if s and not s.startswith("+"):
+        s = "+" + s
+    return s
+
+
+class PhoneVerifyStartIn(BaseModel):
+    phone: str
+
+
+class PhoneVerifyCheckIn(BaseModel):
+    phone: str
+    code: str
+
+
+@api.post("/profile/phone/verify/start")
+async def phone_verify_start(body: PhoneVerifyStartIn, user: dict = Depends(get_current_user)):
+    tw = _twilio_client()
+    if not tw:
+        raise HTTPException(status_code=503, detail="Twilio not configured on the server (missing TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN).")
+    if not TWILIO_VERIFY_SERVICE_SID:
+        raise HTTPException(status_code=503, detail="Twilio Verify Service SID not configured. Ask the admin to create a Verify Service and set TWILIO_VERIFY_SERVICE_SID.")
+    phone = _normalize_phone(body.phone)
+    if not _E164.match(phone):
+        raise HTTPException(status_code=400, detail="Enter your phone in international format, e.g. +919876543210 or +971501234567.")
+    try:
+        v = await asyncio.to_thread(
+            lambda: tw.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verifications.create(to=phone, channel="sms")
+        )
+    except TwilioRestException as e:
+        msg = getattr(e, "msg", None) or str(e)
+        raise HTTPException(status_code=400, detail=f"Couldn't send code: {msg}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Verify start failed: {e}")
+    return {"status": v.status, "phone": phone}
+
+
+@api.post("/profile/phone/verify/check")
+async def phone_verify_check(body: PhoneVerifyCheckIn, user: dict = Depends(get_current_user)):
+    tw = _twilio_client()
+    if not tw:
+        raise HTTPException(status_code=503, detail="Twilio not configured.")
+    if not TWILIO_VERIFY_SERVICE_SID:
+        raise HTTPException(status_code=503, detail="Twilio Verify Service SID not configured.")
+    phone = _normalize_phone(body.phone)
+    code = (body.code or "").strip()
+    if not _E164.match(phone) or not code:
+        raise HTTPException(status_code=400, detail="Phone or code missing.")
+    try:
+        check = await asyncio.to_thread(
+            lambda: tw.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verification_checks.create(to=phone, code=code)
+        )
+    except TwilioRestException as e:
+        msg = getattr(e, "msg", None) or str(e)
+        raise HTTPException(status_code=400, detail=f"Couldn't verify: {msg}")
+    approved = getattr(check, "status", None) == "approved"
+    if not approved:
+        return {"verified": False, "status": getattr(check, "status", "pending")}
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"phone": phone, "phone_verified": True, "phone_verified_at": now_iso()}},
+    )
+    updated = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return {"verified": True, "user": updated}
+
+
+@api.get("/profile/phone/verify/status")
+async def phone_verify_status(user: dict = Depends(get_current_user)):
+    return {
+        "verify_available": bool(_twilio_client()) and bool(TWILIO_VERIFY_SERVICE_SID),
+        "phone": user.get("phone", "") or "",
+        "phone_verified": bool(user.get("phone_verified")),
+    }
+
 
 # ---------------------------------------------------------------- projects & workers
 
@@ -2195,10 +2281,11 @@ async def insights(user: dict = Depends(get_current_user)):
     scorecards.sort(key=lambda x: -x["score"])
 
     return {
+        "has_data": bool(workers or projects or txns or att or comp or subs),
         "predictions": {
-            "labour_shortage": {"level": ls_level, "metric": f"{absenteeism}% absenteeism", "detail": f"{present7} attendance marks across the last 7 days against ~{expected} expected worker-days."},
+            "labour_shortage": {"level": ls_level, "metric": f"{absenteeism}% absenteeism", "detail": f"{present7} attendance marks across the last 7 days against ~{expected} expected worker-days." if workers else "Add workers to enable absenteeism tracking."},
             "cost_overrun": {"level": co_level, "metric": f"{max_pct}% labour/budget", "detail": "Highest labour-spend share of project budget across active projects." if projects else "Add project budgets to enable burn tracking."},
-            "delay_risk": {"level": dr_level, "metric": f"{overdue} overdue items", "detail": "Combined signal from absenteeism and overdue compliance deadlines."},
+            "delay_risk": {"level": dr_level, "metric": f"{overdue} overdue items", "detail": "Combined signal from absenteeism and overdue compliance deadlines." if (workers or comp) else "Add workers or compliance deadlines to score delay risk."},
         },
         "subcontractor_scorecards": scorecards,
         "project_overrun": overrun_rows,

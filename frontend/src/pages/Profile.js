@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { CheckCircle, WarningCircle, FloppyDisk, PencilSimple } from "@phosphor-icons/react";
 import { COUNTRIES } from "@/lib/country";
 import TelegramConnect from "@/components/TelegramConnect";
+import PhoneVerify from "@/components/PhoneVerify";
 
 const ROLES = ["Contractor", "Builder / Developer", "MEP", "Civil", "Interiors / Fit-out", "Facility Maintenance", "Other"];
 const REQUIRED = ["name", "phone"];
@@ -227,6 +228,7 @@ export default function Profile() {
         </div>
       </form>
 
+      <PhoneVerify />
       <TelegramConnect />
     </div>
   );

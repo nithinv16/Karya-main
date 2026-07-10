@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 22 backend-only tests for phone verify (Twilio Verify) graceful degradation, insights has_data flag, TWILIO_WHATSAPP_FROM normalization, and telegram/dashboard regressions. All 10 tests passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/profile/phone/verify/start", "issue": "When TWILIO_ACCOUNT_SID is also empty (as in preview), the 503 detail is 'Twilio not configured on the server...' rather than the more specific 'Twilio Verify Service SID not configured.' — both are acceptable graceful degradation, but if the user configures ACCOUNT_SID/AUTH_TOKEN without VERIFY_SERVICE_SID they will get the more specific message. Not a bug."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration22_phone_verify_insights.py",
+    "/app/test_reports/pytest/iteration22.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py has grown to 2632 lines — recommend splitting into routers (auth, profile, projects, workers, insights, telegram, twilio) for maintainability.",
+    "Two @app.on_event('startup') handlers and one deprecated on_event pattern — migrate to FastAPI lifespan context.",
+    "TWILIO_WHATSAPP_FROM normalization at line 58 is correct — `(os.environ.get(...) or '').strip() or default` properly handles empty env vars."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "not tested"},
+  "test_credentials": "Bearer test_session_karya1 (user_id=test-user-karya1). Confirmed working via /api/profile/phone/verify/status.",
+  "seed_data_creation": "None — used existing QA user which has 2 seeded workers (so has_data=true was verified structurally; a no-data user test was skipped as noted acceptable in request).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_iteration22_phone_verify_insights.py covers phone verify graceful degradation and TWILIO_WHATSAPP_FROM default. It imports backend.server as `server` from /app/backend (sys.path prepend). Do NOT enable TWILIO_VERIFY_SERVICE_SID in .env — the whole point is graceful-503 testing. Prior iteration_21 restart-webhook test intentionally skipped per instructions. Webhook was NOT touched by iter22 (telegram/link/code was called which reclaims to preview URL — main agent may restore to production URL if needed).",
+  "rca of the issue": "N/A — verification pass. All fixes from the batch (Twilio WhatsApp From default normalization at server.py:58, Twilio Verify endpoints at 393-472 with 503 graceful degradation, insights has_data flag) are working as designed."
+}
