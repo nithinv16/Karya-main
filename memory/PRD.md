@@ -1,6 +1,7 @@
 # Clerkworks.OS — AI Operating System for Construction
 
 ## Changelog
+- 2026-02 (d): Fixed cross-origin CORS block. Emergent's ingress rewrites `Access-Control-Allow-Origin` to `*`, which prohibits credentialed cookies. Switched auth to `Authorization: Bearer <token>` stored in `localStorage.karya_session_token`. Cookie path retained for same-origin. Verified 7/7 scenarios (iteration_11.json).
 - 2026-02 (c): Added error transparency so future auth failures no longer silently bounce. Backend now returns `detail = "emergent_<code>: <body>"` and logs the full session_id. Login page shows a `[data-testid=auth-error-banner]` when `?auth_error=...` is present. Verified 5/5 (iteration_10.json).
 - 2026-02 (b): Second fix for post-login redirect — root cause was React StrictMode double-mounting AuthCallback in dev, causing the one-time Emergent `session_id` to be POSTed twice: first call succeeded, second returned 401 (user_data_not_found) and its `window.location.replace('/')` overwrote the success redirect to `/dashboard`. Fix: module-scoped `let inFlight = false;` guard outside the component so only the first mount performs the exchange. Backend now also logs the Emergent response body on non-200. Verified 3/3 scenarios (iteration_9.json).
 - 2026-02 (a): AuthCallback switched from `setUser + history.replaceState + navigate('/dashboard')` to hard `window.location.replace('/dashboard')`.
