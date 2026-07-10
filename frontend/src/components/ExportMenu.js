@@ -35,7 +35,19 @@ export default function ExportMenu({ endpoint, filename = "export", label = "Exp
       toast.success(`${fmt.toUpperCase()} ready`);
     } catch (e) {
       console.error("Export failed:", e);
-      toast.error(`Couldn't generate ${fmt.toUpperCase()} — ${e?.response?.data?.detail || "server error"}`);
+      // With responseType:'blob', error responses arrive as blobs — decode JSON if possible.
+      let detail = "server error";
+      const blob = e?.response?.data;
+      if (blob instanceof Blob) {
+        try {
+          const text = await blob.text();
+          const parsed = JSON.parse(text);
+          detail = parsed?.detail || text || detail;
+        } catch { /* not JSON */ }
+      } else if (e?.response?.data?.detail) {
+        detail = e.response.data.detail;
+      }
+      toast.error(`Couldn't generate ${fmt.toUpperCase()} — ${detail}`);
     } finally {
       setBusy(null);
     }
