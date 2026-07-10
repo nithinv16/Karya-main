@@ -58,7 +58,7 @@ function ScoreCard({ dashboard }) {
             { key: "overdue", label: "Overdue", val: counts.overdue, color: "text-[#DC2626]", testid: "count-overdue" },
             { key: "critical", label: "≤7 days", val: counts.critical, color: "text-[#EA580C]", testid: "count-critical" },
             { key: "warning", label: "8-30 days", val: counts.warning + counts.watch, color: "text-[#CA8A04]", testid: "count-warning" },
-            { key: "ok", label: "Healthy", val: counts.ok + (totals.completed || 0), color: "text-[#16A34A]", testid: "count-ok" },
+            { key: "ok", label: "Healthy", val: counts.ok, color: "text-[#16A34A]", testid: "count-ok" },
             { key: "exposure", label: "Penalty exposure", val: `₹${Math.round(penalty_exposure).toLocaleString("en-IN")}`, color: "text-[#09090B]", testid: "penalty-exposure" },
           ].map((s) => (
             <div key={s.key} data-testid={s.testid}>
