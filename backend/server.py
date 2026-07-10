@@ -38,15 +38,40 @@ AUTH_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/sess
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
 APP_NAME = "karya"
 
+# Public backend URL for building absolute media URLs (used by Twilio WhatsApp).
+# Falls back to the CORS origin list on startup if not explicitly set.
+BACKEND_PUBLIC_URL = os.environ.get("BACKEND_PUBLIC_URL", "").rstrip("/")
+if not BACKEND_PUBLIC_URL:
+    # Derive from first non-localhost CORS origin as a reasonable default so signed
+    # file URLs (used as Twilio media_url) work without extra configuration.
+    for _o in [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",")]:
+        if _o.startswith("https://") and "localhost" not in _o:
+            BACKEND_PUBLIC_URL = _o.rstrip("/")
+            break
+FILE_URL_SIGNING_KEY = os.environ.get("FILE_URL_SIGNING_KEY", EMERGENT_LLM_KEY)  # stable per-env secret
+
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 TWILIO_WHATSAPP_FROM = os.environ.get("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
-BACKEND_PUBLIC_URL = os.environ.get("BACKEND_PUBLIC_URL", "")  # optional; used for building media URLs
 
 def _twilio_client():
     if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
         return None
     return TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+def sign_file_path(path: str, expires_at: int) -> str:
+    """HMAC-SHA256 signature for time-limited public file URLs."""
+    import hmac
+    import hashlib
+    msg = f"{path}|{expires_at}".encode()
+    return hmac.new(FILE_URL_SIGNING_KEY.encode(), msg, hashlib.sha256).hexdigest()[:32]
+
+def build_signed_file_url(path: str, base_url: str, ttl_seconds: int = 3 * 24 * 3600) -> str:
+    """Return an absolute URL to /api/files/<path> valid for `ttl_seconds`."""
+    import time
+    exp = int(time.time()) + ttl_seconds
+    sig = sign_file_path(path, exp)
+    return f"{base_url.rstrip('/')}/api/files/{path}?sig={sig}&exp={exp}"
 
 app = FastAPI(title="Karya API")
 api = APIRouter(prefix="/api")
@@ -468,7 +493,24 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_cur
     return rec
 
 @api.get("/files/{path:path}")
-async def download_file(path: str, request: Request, auth: Optional[str] = Query(None)):
+async def download_file(
+    path: str,
+    request: Request,
+    auth: Optional[str] = Query(None),
+    sig: Optional[str] = Query(None),
+    exp: Optional[int] = Query(None),
+):
+    # Path 1: valid HMAC-signed URL (used by Twilio to fetch media). No auth needed.
+    if sig and exp:
+        import time
+        if exp > int(time.time()) and sig == sign_file_path(path, exp):
+            rec = await db.files.find_one({"path": path, "is_deleted": False}, {"_id": 0})
+            if rec:
+                data, ct = await asyncio.to_thread(get_object, path)
+                return Response(content=data, media_type=rec.get("content_type") or ct)
+        raise HTTPException(status_code=403, detail="Invalid or expired signature")
+
+    # Path 2: session-bound access (cookie, bearer, or ?auth=<token>).
     token = request.cookies.get("session_token")
     if not token:
         auth_header = request.headers.get("Authorization", "")
@@ -1133,207 +1175,8 @@ async def insights_briefing(user: dict = Depends(get_current_user)):
         return {"ai_summary": ""}
     return {"ai_summary": summary.strip()}
 
-# ---------------------------------------------------------------- daily reports (NEW)
-
-class ReportGenIn(BaseModel):
-    project_id: Optional[str] = None
-    location: str = ""
-    notes_text: str = ""
-    photo_ids: List[str] = []
-    report_date: Optional[str] = None
-    whatsapp_send: bool = False
-    whatsapp_audience: Dict[str, bool] = {}  # {client: bool, subcontractors: bool, labour: bool}
-    whatsapp_extra_numbers: List[str] = []
-
-
-class WhatsappSendIn(BaseModel):
-    audience: Dict[str, bool] = {}
-    extra_numbers: List[str] = []
-
-
-def _normalize_phone(p: str) -> Optional[str]:
-    """Return E.164 phone with 'whatsapp:' prefix, or None if invalid."""
-    if not p:
-        return None
-    s = re.sub(r"[^\d+]", "", p.strip())
-    if not s:
-        return None
-    if not s.startswith("+"):
-        # Assume Indian number if 10 digits
-        if len(s) == 10:
-            s = "+91" + s
-        else:
-            s = "+" + s
-    return f"whatsapp:{s}"
-
-
-def _format_report_message(rec: dict) -> str:
-    c = rec.get("content") or {}
-    lines = [
-        f"*{c.get('title') or 'Daily Site Report'}*",
-        f"_{rec.get('project_name') or 'Site'} · {rec.get('report_date') or ''}_",
-        "",
-    ]
-    if c.get("summary"):
-        lines.append(c["summary"])
-        lines.append("")
-    if c.get("work_completed"):
-        lines.append("*Work completed:*")
-        lines += [f"• {x}" for x in c["work_completed"][:6]]
-        lines.append("")
-    if c.get("manpower"):
-        lines.append(f"*Manpower:* {c['manpower']}")
-    if c.get("issues_delays"):
-        lines.append("*Issues / delays:*")
-        lines += [f"• {x}" for x in c["issues_delays"][:4]]
-    if c.get("next_steps"):
-        lines.append("*Next steps:*")
-        lines += [f"• {x}" for x in c["next_steps"][:4]]
-    if rec.get("location"):
-        lines.append("")
-        lines.append(f"📍 {rec['location']}")
-    body = "\n".join(lines).strip()
-    return body[:1500]
-
-
-async def _resolve_report_recipients(
-    owner_id: str, project_id: Optional[str],
-    audience: Dict[str, bool], extra: List[str]
-) -> List[str]:
-    numbers: List[str] = []
-    if audience.get("client") and project_id:
-        proj = await db.projects.find_one({"id": project_id, "owner_id": owner_id}, {"_id": 0})
-        if proj and proj.get("client_phone"):
-            numbers.append(proj["client_phone"])
-    if audience.get("subcontractors"):
-        subs = await db.subcontractors.find(
-            {"owner_id": owner_id, **({"project_id": project_id} if project_id else {})},
-            {"_id": 0, "phone": 1}
-        ).to_list(200)
-        numbers += [s.get("phone", "") for s in subs if s.get("phone")]
-    if audience.get("labour"):
-        q = {"owner_id": owner_id}
-        if project_id:
-            q["project_id"] = project_id
-        workers = await db.workers.find(q, {"_id": 0, "phone": 1}).to_list(500)
-        numbers += [w.get("phone", "") for w in workers if w.get("phone")]
-    numbers += list(extra or [])
-    # normalize + de-dupe, drop invalid
-    seen, out = set(), []
-    for n in numbers:
-        norm = _normalize_phone(n)
-        if norm and norm not in seen:
-            seen.add(norm)
-            out.append(norm)
-    return out
-
-
-def _send_whatsapp_batch(numbers: List[str], body: str, media_urls: Optional[List[str]] = None) -> Dict[str, Any]:
-    tw = _twilio_client()
-    if not tw:
-        return {"sent": 0, "failed": 0, "errors": ["Twilio not configured — set TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN"], "recipients": numbers}
-    sent, failed, errors = 0, 0, []
-    for n in numbers:
-        try:
-            kwargs = {"from_": TWILIO_WHATSAPP_FROM, "to": n, "body": body}
-            if media_urls:
-                kwargs["media_url"] = media_urls[:5]  # Twilio max 10 media items
-            tw.messages.create(**kwargs)
-            sent += 1
-        except TwilioRestException as e:
-            failed += 1
-            errors.append(f"{n}: {e.msg or str(e)}")
-        except Exception as e:
-            failed += 1
-            errors.append(f"{n}: {e}")
-    return {"sent": sent, "failed": failed, "errors": errors[:10], "recipients": numbers}
-
-REPORT_SYSTEM = """You write professional daily site reports for construction & maintenance companies in India.
-You receive field notes (often a rough voice-note transcript), site photos, a location and a date.
-Study the photos carefully — describe visible work, progress, equipment, materials and any safety issues you can see.
-Output JSON:
-{"title": str, "summary": str, "weather": str|null, "work_completed": [str], "manpower": str,
- "materials_used": [str], "issues_delays": [str], "safety_observations": [str], "next_steps": [str]}
-Keep it factual and professional — this report goes to the client/management. If a field is unknown, use an empty list or null."""
-
-@api.post("/reports/generate")
-async def generate_report(body: ReportGenIn, user: dict = Depends(get_current_user)):
-    uid = user["user_id"]
-    if not body.notes_text.strip() and not body.photo_ids:
-        raise HTTPException(status_code=400, detail="Provide field notes or at least one photo")
-    project = None
-    if body.project_id:
-        project = await db.projects.find_one({"id": body.project_id, "owner_id": uid}, {"_id": 0})
-    photos = []
-    images = []
-    for fid in body.photo_ids[:4]:
-        rec = await db.files.find_one({"id": fid, "owner_id": uid, "is_deleted": False}, {"_id": 0})
-        if not rec:
-            continue
-        photos.append(rec)
-        if (rec.get("content_type") or "").startswith("image/"):
-            try:
-                data, _ = await asyncio.to_thread(get_object, rec["path"])
-                images.append(ImageContent(image_base64=base64.b64encode(data).decode()))
-            except Exception as e:
-                logger.warning(f"Photo fetch failed: {e}")
-    rdate = body.report_date or today_str()
-    prompt = (
-        f"Project: {project['name'] if project else 'Not specified'}"
-        + (f" ({project.get('location')}, client: {project.get('client')})" if project else "") + "\n"
-        f"Report date: {rdate}\nLocation: {body.location or 'Not specified'}\n"
-        f"Field notes / voice transcript:\n{body.notes_text.strip() or '(none — rely on the photos)'}\n"
-        f"Photos attached: {len(images)}"
-    )
-    content = await ai_json(REPORT_SYSTEM, prompt, images=images or None)
-    doc = {
-        "id": new_id(), "owner_id": uid, "project_id": body.project_id,
-        "project_name": project["name"] if project else None,
-        "location": body.location, "notes_text": body.notes_text,
-        "report_date": rdate, "photos": photos, "content": content,
-        "whatsapp": {"sent": 0, "failed": 0, "recipients": []},
-        "created_at": now_iso(),
-    }
-    await db.daily_reports.insert_one({**doc})
-    doc.pop("_id", None)
-    # Optional auto-send on generation
-    if body.whatsapp_send:
-        numbers = await _resolve_report_recipients(uid, body.project_id, body.whatsapp_audience or {}, body.whatsapp_extra_numbers or [])
-        result = await asyncio.to_thread(_send_whatsapp_batch, numbers, _format_report_message(doc), None)
-        await db.daily_reports.update_one({"id": doc["id"]}, {"$set": {"whatsapp": result}})
-        doc["whatsapp"] = result
-    return doc
-
-@api.post("/reports/{report_id}/whatsapp")
-async def send_report_whatsapp(report_id: str, body: WhatsappSendIn, user: dict = Depends(get_current_user)):
-    uid = user["user_id"]
-    rec = await db.daily_reports.find_one({"id": report_id, "owner_id": uid}, {"_id": 0})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Report not found")
-    numbers = await _resolve_report_recipients(uid, rec.get("project_id"), body.audience or {}, body.extra_numbers or [])
-    if not numbers:
-        raise HTTPException(status_code=400, detail="No valid recipient numbers resolved")
-    result = await asyncio.to_thread(_send_whatsapp_batch, numbers, _format_report_message(rec), None)
-    await db.daily_reports.update_one({"id": report_id}, {"$set": {"whatsapp": result}})
-    return result
-
-@api.get("/reports")
-async def list_reports(user: dict = Depends(get_current_user)):
-    return await db.daily_reports.find({"owner_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
-
-@api.get("/reports/{report_id}")
-async def get_report(report_id: str, user: dict = Depends(get_current_user)):
-    rec = await db.daily_reports.find_one({"id": report_id, "owner_id": user["user_id"]}, {"_id": 0})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return rec
-
-@api.delete("/reports/{report_id}")
-async def delete_report(report_id: str, user: dict = Depends(get_current_user)):
-    res = await db.daily_reports.delete_one({"id": report_id, "owner_id": user["user_id"]})
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return {"ok": True}
+# ---------------------------------------------------------------- daily reports
+# (moved to routes/reports.py)
 
 # ---------------------------------------------------------------- app wiring
 
@@ -1341,7 +1184,29 @@ async def delete_report(report_id: str, user: dict = Depends(get_current_user)):
 async def root():
     return {"status": "ok", "service": "Karya API"}
 
+# Mount extracted routers
+from routes.reports import build_router as _build_reports_router, Deps as _ReportsDeps
+api.include_router(_build_reports_router(_ReportsDeps(
+    db=db,
+    get_current_user=get_current_user,
+    new_id=new_id,
+    now_iso=now_iso,
+    today_str=today_str,
+    get_object=get_object,
+    ai_json=ai_json,
+    image_content_cls=ImageContent,
+    twilio_client=_twilio_client,
+    twilio_from=TWILIO_WHATSAPP_FROM,
+    twilio_rest_exception=TwilioRestException,
+    build_signed_file_url=build_signed_file_url,
+    backend_public_url=BACKEND_PUBLIC_URL,
+    logger=logger,
+)))
+
 app.include_router(api)
+
+
+# --- CORS + startup ---
 
 app.add_middleware(
     CORSMiddleware,
@@ -1359,3 +1224,4 @@ async def startup():
         logger.info("Object storage initialized")
     except Exception as e:
         logger.error(f"Storage init failed (will retry on first use): {e}")
+

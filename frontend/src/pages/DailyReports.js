@@ -61,6 +61,19 @@ export default function DailyReports() {
     onError: (e) => toast.error(e?.response?.data?.detail || "WhatsApp send failed"),
   });
 
+  const quickSend = useMutation({
+    mutationFn: async (reportId) => {
+      const res = await api.post(`/reports/${reportId}/whatsapp/quick`);
+      return { reportId, data: res.data };
+    },
+    onSuccess: ({ data }) => {
+      if (data.sent > 0) toast.success(`Sent to ${data.sent} on WhatsApp`);
+      else toast.warning(data.errors?.[0] || "Nothing sent");
+      qc.invalidateQueries({ queryKey: ["reports"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Quick send failed. Add a client WhatsApp on the project or in your profile."),
+  });
+
   const del = useMutation({
     mutationFn: async (id) => (await api.delete(`/reports/${id}`)).data,
     onSuccess: () => { toast.success("Report deleted"); qc.invalidateQueries({ queryKey: ["reports"] }); },
@@ -178,7 +191,18 @@ export default function DailyReports() {
                 <div key={r.id} data-testid={`report-card-${r.id}`} className="border border-[#E4E4E7] p-4 hover:border-[#EA580C] transition-colors duration-200 flex flex-col">
                   <div className="flex items-start justify-between gap-2">
                     <Badge tone="accent">{r.report_date}</Badge>
-                    <button data-testid={`delete-report-${r.id}`} onClick={() => del.mutate(r.id)} className="text-[#71717A] hover:text-[#DC2626] transition-colors duration-200"><Trash size={15} weight="bold" /></button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        data-testid={`quick-whatsapp-${r.id}`}
+                        title="Send to client on WhatsApp"
+                        onClick={(e) => { e.stopPropagation(); quickSend.mutate(r.id); }}
+                        disabled={quickSend.isPending && quickSend.variables === r.id}
+                        className="p-1.5 border border-[#E4E4E7] hover:border-[#25D366] text-[#3f3f46] hover:text-[#25D366] transition-colors duration-200 disabled:opacity-50"
+                      >
+                        <PaperPlaneTilt size={14} weight="fill" />
+                      </button>
+                      <button data-testid={`delete-report-${r.id}`} onClick={(e) => { e.stopPropagation(); del.mutate(r.id); }} className="p-1.5 text-[#71717A] hover:text-[#DC2626] transition-colors duration-200"><Trash size={15} weight="bold" /></button>
+                    </div>
                   </div>
                   <button onClick={() => setActive(r)} className="text-left mt-2">
                     <h3 className="font-display font-bold leading-snug">{r.content?.title || "Daily Report"}</h3>
@@ -187,6 +211,7 @@ export default function DailyReports() {
                       {r.project_name && <Badge>{r.project_name}</Badge>}
                       {r.photos?.length > 0 && <span className="flex items-center gap-1"><Camera size={13} weight="bold" /> {r.photos.length}</span>}
                       {r.location && <span className="flex items-center gap-1 truncate"><MapPin size={13} weight="bold" /> {r.location}</span>}
+                      {r.whatsapp?.sent > 0 && <span className="flex items-center gap-1 text-[#25D366]"><PaperPlaneTilt size={12} weight="fill" /> {r.whatsapp.sent}</span>}
                     </div>
                     <p className="text-xs font-semibold text-[#EA580C] mt-2">Open report →</p>
                   </button>
