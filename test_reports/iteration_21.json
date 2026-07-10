@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 21 — Backend-only verification of Telegram /start CODE linking + webhook race-condition fix. 9/9 pytest tests passed: code generation (fresh, uppercase alphabet, previous purged), link/code atomically reclaims Telegram webhook to THIS backend, /start CODE links chat_id and consumes code, invalid code returns 200 without linking, lowercase and whitespace/@-mention-padded codes still resolve, preview backend restart does NOT auto-reclaim the webhook (autoregister skip on preview host verified), and unlink clears telegram_chat_id. Production webhook (https://voice-to-docs-6.emergent.host/api/telegram/webhook) explicitly restored and QA chat re-linked at end of run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration21_telegram_link_race.py",
+    "/app/test_reports/pytest/iteration21.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py still ~2545 lines — Telegram surface (~700 lines) is a good candidate to extract into backend/telegram/ module.",
+    "_handle_tg_start correctly upper-cases + strips + split()[0]s the code arg; robust to @mention prefixes and whitespace.",
+    "link/code setWebhook call is wrapped in try/except and logged non-fatal — good; consider surfacing failure back to the client so UI can warn if reclaim didn't succeed.",
+    "Startup autoregister uses substring match on 'preview.emergentagent.com' — brittle if the preview host domain changes; consider a dedicated env flag (e.g. IS_PREVIEW=true) instead of string matching."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration21_telegram_link_race.py (new)"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "not tested (backend-only per request)"},
+  "test_credentials": "Bearer test_session_karya1 (user_id=test-user-karya1) verified working. DB karya_db_v2.",
+  "seed_data_creation": "No new seed data. Test restores prod Telegram webhook + relinks QA user to chat 999000111 in teardown so real-user flow and iteration_20 regression tests remain unaffected.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iteration21_telegram_link_race.py verifies webhook race-condition fix. Note: test_restart_preview_does_not_reclaim_webhook restarts the backend via supervisorctl — expect ~5s downtime on that test. Prod webhook is: https://voice-to-docs-6.emergent.host/api/telegram/webhook ; preview webhook is: {REACT_APP_BACKEND_URL}/api/telegram/webhook. Any test that toggles webhook MUST restore prod at end.",
+  "rca of the issue": "Original bug — Telegram bot has ONE global webhook; both preview and production backends auto-registered on startup, so a code generated in env A's Mongo could arrive at env B's backend where the code did not exist, producing 'That linking code isn't valid'. Fix (verified): (a) preview host skips auto-registration on startup (string-match on 'preview.emergentagent.com', overridable via TELEGRAM_AUTO_REGISTER_WEBHOOK env), (b) POST /api/telegram/link/code performs setWebhook atomically to claim the webhook for the calling backend, guaranteeing /start CODE lands where the code lives, (c) 'invalid code' Telegram reply is now actionable. All three behaviours verified by tests 2, 7 and the /start flow tests."
+}

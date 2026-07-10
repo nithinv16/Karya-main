@@ -893,6 +893,18 @@ async def telegram_link_code(user: dict = Depends(get_current_user)):
     await db.telegram_link_codes.insert_one({
         "code": code, "user_id": user["user_id"], "expires_at": expires_at, "created_at": now_iso(),
     })
+    # Claim the Telegram webhook for THIS backend so /start CODE routes back to
+    # the same env whose Mongo actually holds this code. Prevents "invalid code"
+    # when preview + production both point their bot at each other.
+    try:
+        if BACKEND_PUBLIC_URL:
+            await tg_api("setWebhook", {
+                "url": f"{BACKEND_PUBLIC_URL}/api/telegram/webhook",
+                "secret_token": TELEGRAM_WEBHOOK_SECRET,
+                "allowed_updates": ["message", "edited_message", "callback_query"],
+            })
+    except Exception as e:
+        logger.warning(f"telegram setWebhook on link/code failed (non-fatal): {e}")
     # Fetch bot username (cached in a class var to save API calls).
     global _TG_BOT_USERNAME
     if not globals().get("_TG_BOT_USERNAME"):
@@ -943,10 +955,19 @@ async def _handle_tg_start(chat_id: int, from_user: dict, arg: str):
     if not arg:
         await tg_send(chat_id, WELCOME_UNLINKED)
         return
-    code = arg.strip().upper()
+    # Strip any leading @botusername mention (Telegram groups sometimes prefix)
+    code = arg.strip().split()[0].upper()
     entry = await db.telegram_link_codes.find_one({"code": code})
     if not entry:
-        await tg_send(chat_id, "⚠️ That linking code isn't valid. Please generate a fresh one from Karya → Profile → Connect Telegram.")
+        logger.info(f"telegram /start: code '{code}' not found in db={os.environ.get('DB_NAME', '?')}")
+        await tg_send(
+            chat_id,
+            "⚠️ That linking code isn't valid or has already been used.\n\n"
+            "Please open Karya → <b>Profile</b> → <b>Connect Telegram</b>, tap "
+            "<b>Generate new code</b>, and send the fresh 6-character code here as "
+            "<code>/start ABCDEF</code>.\n\n"
+            "Tip: make sure you're generating the code from the <i>same</i> Karya URL you signed up on.",
+        )
         return
     try:
         exp = datetime.fromisoformat(entry["expires_at"])
@@ -1468,8 +1489,21 @@ async def telegram_register_webhook(user: dict = Depends(get_current_user)):
 
 @app.on_event("startup")
 async def _tg_autoregister_webhook():
-    """Register the Telegram webhook automatically when the server boots."""
+    """Register the Telegram webhook automatically when the server boots.
+
+    IMPORTANT: A Telegram bot has ONE global webhook — preview and production
+    would otherwise fight over it and land /start CODE at the wrong environment
+    (whose Mongo doesn't have the code → 'linking code isn't valid').
+    We therefore only auto-register from a *production-style* host, and skip it
+    on the ephemeral preview host. Preview devs can still register manually via
+    POST /api/telegram/register-webhook if they explicitly need it.
+    """
     if not _tg_configured() or not BACKEND_PUBLIC_URL:
+        return
+    is_preview_host = "preview.emergentagent.com" in BACKEND_PUBLIC_URL
+    force = os.environ.get("TELEGRAM_AUTO_REGISTER_WEBHOOK", "").strip().lower() in {"1", "true", "yes"}
+    if is_preview_host and not force:
+        logger.info("telegram webhook autoregister skipped on preview host (set TELEGRAM_AUTO_REGISTER_WEBHOOK=true to override)")
         return
     try:
         r = await tg_api("setWebhook", {
