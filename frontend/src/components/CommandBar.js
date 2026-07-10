@@ -4,15 +4,26 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Terminal, ArrowRight } from "@phosphor-icons/react";
 import VoiceButton from "@/components/VoiceButton";
+import { useAuth } from "@/context/AuthContext";
 
-const examples = [
-  "Ramesh took an advance of ₹5000",
-  "Pay Manoj ₹12000",
-  "Ten workers arrived today at Skyline Towers",
-  "Add worker Sunil as mason at 950 daily",
-];
+const EXAMPLES_BY_COUNTRY = {
+  IN: [
+    "Ramesh took an advance of ₹5000",
+    "Pay Manoj ₹12000",
+    "Ten workers arrived today at Skyline Towers",
+    "Add worker Sunil as mason at 950 daily",
+  ],
+  AE: [
+    "Rashid took an advance of AED 500",
+    "Pay Ahmed AED 1200 via WPS",
+    "Ten workers arrived today at Marina Tower",
+    "Add worker Kumar as mason at AED 60 hourly",
+  ],
+};
 
 export default function CommandBar() {
+  const { user } = useAuth();
+  const examples = EXAMPLES_BY_COUNTRY[user?.country] || EXAMPLES_BY_COUNTRY.IN;
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [ph, setPh] = useState(0);
@@ -21,7 +32,7 @@ export default function CommandBar() {
   React.useEffect(() => {
     const t = setInterval(() => setPh((p) => (p + 1) % examples.length), 3200);
     return () => clearInterval(t);
-  }, []);
+  }, [examples.length]);
 
   const runCommand = async (cmd) => {
     if (!cmd.trim() || loading) return;
