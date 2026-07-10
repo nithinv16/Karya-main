@@ -36,7 +36,12 @@ export const AuthProvider = ({ children }) => {
   }, [checkAuth]);
 
   const logout = async () => {
-    try { await api.post("/auth/logout"); } catch {}
+    try {
+      await api.post("/auth/logout");
+    } catch (err) {
+      // Server-side logout is best-effort; local session is cleared regardless.
+      console.warn("Logout request failed:", err?.message || err);
+    }
     setToken(null);
     setUser(null);
     window.location.href = "/";
