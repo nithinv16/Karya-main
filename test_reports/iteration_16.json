@@ -1,0 +1,22 @@
+{
+  "summary": "Iteration 16 validates Phase 1 bug fixes: (1) Projects CRUD backend (POST/GET-list/GET-one/PUT/DELETE) with worker unassign cascade — 8/8 pytest cases pass. (2) Worker ledger split — GET /api/workers/{id}/ledger returns earned=11000, advances=2000, paid=5000, deductions=700, balance=3300 with the spec dataset; 'paid' key present. (3) Workforce UI: projects-section renders when projects exist; project cards show name/location/client/worker-count/budget; Edit prefills the dialog and Save updates the card name; Delete via window.confirm() removes the card and shows toast. (4) Payroll UI: 5 tiles visible (Earned ₹11,000 / Advances ₹2,000 / Deductions ₹700 / Paid ₹5,000 / Net Payable ₹3,300) matching backend. (5) Regression: all 10 routes (/dashboard,/workforce,/payroll,/reports,/compliance,/feed,/sops,/knowledge,/insights,/subcontractors) load with 0 console errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iteration16_projects_ledger.py", "/app/test_reports/pytest/iter16.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Workforce.js line 148: projects-section is conditional on `projects && projects.length > 0`. That means when the user has 0 projects, the section is completely absent and there is no in-page CTA guiding them to create one (New Project button in the header still works). This is a UX nit, not a bug — main agent may consider showing an empty-state card inside projects-section.",
+    "Payroll.js balanceFor() (line 28-35) duplicates the server-side ledger_summary() logic. Any future change to EARN/PAID/DEDUCT types must be mirrored in two places. Consider deriving worker balance from the ledger API or exposing a bulk summary endpoint.",
+    "auth_testing.md still references `use('test_database')` but the app now uses karya_database (backend/.env DB_NAME). Please update the playbook to avoid future confusion.",
+    "server.py projects endpoints do not validate that `budget >= 0` — user could POST negative budget. Low severity but easy to add via pydantic constraints.",
+    "Delete project uses window.confirm() — non-shadcn dialog. Fine for the fix, but consider AlertDialog for consistency with the rest of the app."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (10/10 iteration16 tests)", "frontend": "100% (Projects CRUD UI + Ledger tiles + 10-route regression)"},
+  "test_credentials": "Bearer test_session_karya1 for user test-user-karya1 in karya_database (seeded via mongosh — see updated /app/memory/test_credentials.md).",
+  "seed_data_creation": "Seeded test user + 30-day session in karya_database.{users,user_sessions}. UI test data (UI_Skyline_Towers/UI_Coastal_Villas projects, UI_Ramesh worker, ledger transactions) was created via API and CLEANED UP after tests — final list of projects/workers for the test user is empty.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 16 verified projects CRUD + ledger paid-split. Both new fixes work end-to-end (backend + UI). Auth session token `test_session_karya1` is valid for 30 days in karya_database. Frontend uses localStorage['karya_session_token'] for cross-origin bearer; set it BEFORE navigating to any protected route.",
+  "rca of the issue": "Nothing to root-cause — Phase 1 fixes verified. The prior bugs (projects not viewable/editable, inaccurate ledger) are resolved by the two backend endpoint additions (GET-one/PUT/DELETE with cascade to workers) and the ledger_summary() refactor that moved 'payment' out of EARN_TYPES into PAID_TYPES."
+}

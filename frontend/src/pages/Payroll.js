@@ -27,10 +27,11 @@ export default function Payroll() {
 
   const balanceFor = (wid) => {
     const ts = (txns || []).filter((t) => t.worker_id === wid);
-    const earned = ts.filter((t) => ["wage", "payment", "bonus"].includes(t.type)).reduce((s, t) => s + t.amount, 0);
+    const earned = ts.filter((t) => ["wage", "bonus"].includes(t.type)).reduce((s, t) => s + t.amount, 0);
     const adv = ts.filter((t) => t.type === "advance").reduce((s, t) => s + t.amount, 0);
     const ded = ts.filter((t) => ["deduction", "food", "accommodation", "transport", "penalty"].includes(t.type)).reduce((s, t) => s + t.amount, 0);
-    return earned - adv - ded;
+    const paid = ts.filter((t) => t.type === "payment").reduce((s, t) => s + t.amount, 0);
+    return earned - adv - ded - paid;
   };
 
   const addTxn = useMutation({
@@ -54,8 +55,8 @@ export default function Payroll() {
         />
         {ledger.isLoading ? <Spinner /> : (
           <>
-            <div className="grid grid-cols-2 lg:grid-cols-4 border-t border-l border-[#E4E4E7] mb-6">
-              {[["Earned", L?.earned, false], ["Advances", L?.advances, false], ["Deductions", L?.deductions, false], ["Net Payable", L?.balance, true]].map(([lab, val, acc]) => (
+            <div className="grid grid-cols-2 lg:grid-cols-5 border-t border-l border-[#E4E4E7] mb-6">
+              {[["Earned", L?.earned, false], ["Advances", L?.advances, false], ["Deductions", L?.deductions, false], ["Paid", L?.paid, false], ["Net Payable", L?.balance, true]].map(([lab, val, acc]) => (
                 <div key={lab} className="border-r border-b border-[#E4E4E7] p-5">
                   <p className="overline mb-2">{lab}</p>
                   <p className={`font-display font-black text-2xl tracking-tight ${acc ? "text-[#EA580C]" : ""}`}>{fmt(val)}</p>

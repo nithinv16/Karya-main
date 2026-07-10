@@ -77,7 +77,9 @@ app = FastAPI(title="Karya API")
 api = APIRouter(prefix="/api")
 
 ONBOARDING_KEYS = ["id_collected", "contract_signed", "induction_done", "site_access", "insurance", "bank_details"]
-EARN_TYPES = ["wage", "payment", "bonus"]
+# Money the worker *earns* (owed to them). "payment" is now tracked separately as "paid".
+EARN_TYPES = ["wage", "bonus"]
+PAID_TYPES = ["payment"]
 DEDUCT_TYPES = ["deduction", "food", "accommodation", "transport", "penalty"]
 
 # ---------------------------------------------------------------- helpers
@@ -315,6 +317,37 @@ async def create_project(body: ProjectIn, user: dict = Depends(get_current_user)
     doc.pop("_id", None)
     return doc
 
+@api.get("/projects/{project_id}")
+async def get_project(project_id: str, user: dict = Depends(get_current_user)):
+    project = await db.projects.find_one({"id": project_id, "owner_id": user["user_id"]}, {"_id": 0})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    worker_count = await db.workers.count_documents({"project_id": project_id, "owner_id": user["user_id"]})
+    return {**project, "worker_count": worker_count}
+
+@api.put("/projects/{project_id}")
+async def update_project(project_id: str, body: ProjectIn, user: dict = Depends(get_current_user)):
+    res = await db.projects.update_one(
+        {"id": project_id, "owner_id": user["user_id"]},
+        {"$set": body.model_dump()},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Project not found")
+    updated = await db.projects.find_one({"id": project_id, "owner_id": user["user_id"]}, {"_id": 0})
+    return updated
+
+@api.delete("/projects/{project_id}")
+async def delete_project(project_id: str, user: dict = Depends(get_current_user)):
+    res = await db.projects.delete_one({"id": project_id, "owner_id": user["user_id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Project not found")
+    # Unassign workers from the deleted project (don't delete workers themselves).
+    await db.workers.update_many(
+        {"project_id": project_id, "owner_id": user["user_id"]},
+        {"$set": {"project_id": None}},
+    )
+    return {"deleted": True}
+
 @api.get("/workers")
 async def list_workers(user: dict = Depends(get_current_user)):
     return await db.workers.find({"owner_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
@@ -358,7 +391,15 @@ def ledger_summary(txns: list) -> dict:
     earned = sum(t["amount"] for t in txns if t["type"] in EARN_TYPES)
     advances = sum(t["amount"] for t in txns if t["type"] == "advance")
     deductions = sum(t["amount"] for t in txns if t["type"] in DEDUCT_TYPES)
-    return {"earned": earned, "advances": advances, "deductions": deductions, "balance": earned - advances - deductions}
+    paid = sum(t["amount"] for t in txns if t["type"] in PAID_TYPES)
+    # Net payable = earnings minus what worker already received (paid/advances) and any deductions.
+    return {
+        "earned": earned,
+        "advances": advances,
+        "deductions": deductions,
+        "paid": paid,
+        "balance": earned - advances - deductions - paid,
+    }
 
 @api.get("/transactions")
 async def list_transactions(user: dict = Depends(get_current_user)):
@@ -1225,4 +1266,3 @@ async def startup():
         logger.info("Object storage initialized")
     except Exception as e:
         logger.error(f"Storage init failed (will retry on first use): {e}")
-

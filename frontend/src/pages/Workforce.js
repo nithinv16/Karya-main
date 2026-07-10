@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Trash, UsersThree, ShieldCheck, Check } from "@phosphor-icons/react";
+import { Plus, Trash, UsersThree, ShieldCheck, Check, Buildings, PencilSimple, MapPin, User } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const RATE_TYPES = ["daily", "weekly", "monthly", "contract", "sqft", "task", "milestone", "piece"];
@@ -16,26 +16,51 @@ const ONBOARDING = [
   { key: "bank_details", label: "Bank / UPI details" },
 ];
 
+const EMPTY_PROJECT = { name: "", location: "", client: "", client_phone: "", budget: "" };
+
 export default function Workforce() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [projOpen, setProjOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState(null); // holds project object when editing, null when creating
   const [form, setForm] = useState({ name: "", role: "Labour", phone: "", rate: "", rate_type: "daily", project_id: "", subcontractor: "" });
-  const [proj, setProj] = useState({ name: "", location: "", client: "", client_phone: "", budget: "" });
+  const [proj, setProj] = useState(EMPTY_PROJECT);
 
   const { data: workers, isLoading } = useQuery({ queryKey: ["workers"], queryFn: async () => (await api.get("/workers")).data });
   const { data: projects } = useQuery({ queryKey: ["projects"], queryFn: async () => (await api.get("/projects")).data });
 
   const pname = (id) => projects?.find((p) => p.id === id)?.name || "—";
+  const workersInProject = (pid) => (workers || []).filter((w) => w.project_id === pid).length;
 
   const addWorker = useMutation({
     mutationFn: async () => (await api.post("/workers", { ...form, rate: parseFloat(form.rate) || 0, project_id: form.project_id || null })).data,
     onSuccess: () => { toast.success("Worker added"); qc.invalidateQueries({ queryKey: ["workers"] }); setOpen(false); setForm({ name: "", role: "Labour", phone: "", rate: "", rate_type: "daily", project_id: "", subcontractor: "" }); },
   });
-  const addProject = useMutation({
-    mutationFn: async () => (await api.post("/projects", { ...proj, budget: parseFloat(proj.budget) || 0 })).data,
-    onSuccess: () => { toast.success("Project added"); qc.invalidateQueries({ queryKey: ["projects"] }); setProjOpen(false); setProj({ name: "", location: "", client: "", client_phone: "", budget: "" }); },
+  const saveProject = useMutation({
+    mutationFn: async () => {
+      const payload = { ...proj, budget: parseFloat(proj.budget) || 0 };
+      if (editingProject) return (await api.put(`/projects/${editingProject.id}`, payload)).data;
+      return (await api.post("/projects", payload)).data;
+    },
+    onSuccess: () => {
+      toast.success(editingProject ? "Project updated" : "Project added");
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["workers"] });
+      setProjOpen(false); setEditingProject(null); setProj(EMPTY_PROJECT);
+    },
+    onError: () => toast.error("Save failed"),
   });
+  const delProject = useMutation({
+    mutationFn: async (id) => (await api.delete(`/projects/${id}`)).data,
+    onSuccess: () => { toast.success("Project deleted"); qc.invalidateQueries({ queryKey: ["projects"] }); qc.invalidateQueries({ queryKey: ["workers"] }); },
+    onError: () => toast.error("Delete failed"),
+  });
+  const openNewProject = () => { setEditingProject(null); setProj(EMPTY_PROJECT); setProjOpen(true); };
+  const openEditProject = (p) => {
+    setEditingProject(p);
+    setProj({ name: p.name || "", location: p.location || "", client: p.client || "", client_phone: p.client_phone || "", budget: p.budget || "" });
+    setProjOpen(true);
+  };
   const del = useMutation({
     mutationFn: async (id) => (await api.delete(`/workers/${id}`)).data,
     onSuccess: () => { toast.success("Removed"); qc.invalidateQueries({ queryKey: ["workers"] }); },
@@ -65,12 +90,12 @@ export default function Workforce() {
         desc="Workers, crews, subcontractors and labour suppliers — assignable across projects with any pay structure."
         action={
           <div className="flex gap-2">
-            <Dialog open={projOpen} onOpenChange={setProjOpen}>
+            <Dialog open={projOpen} onOpenChange={(v) => { setProjOpen(v); if (!v) { setEditingProject(null); setProj(EMPTY_PROJECT); } }}>
               <DialogTrigger asChild>
-                <button data-testid="add-project-button" className="border-2 border-[#09090B] px-4 py-2.5 text-sm font-semibold hover:bg-[#09090B] hover:text-white transition-colors duration-200">New Project</button>
+                <button data-testid="add-project-button" onClick={openNewProject} className="border-2 border-[#09090B] px-4 py-2.5 text-sm font-semibold hover:bg-[#09090B] hover:text-white transition-colors duration-200">New Project</button>
               </DialogTrigger>
               <DialogContent className="rounded-none border-2 border-[#09090B]">
-                <DialogHeader><DialogTitle className="font-display">New Project</DialogTitle><DialogDescription>Create a project to assign workers and track spend.</DialogDescription></DialogHeader>
+                <DialogHeader><DialogTitle className="font-display">{editingProject ? "Edit Project" : "New Project"}</DialogTitle><DialogDescription>{editingProject ? "Update project details." : "Create a project to assign workers and track spend."}</DialogDescription></DialogHeader>
                 <div className="space-y-3">
                   <input data-testid="project-name-input" className={inputCls} placeholder="Project name" value={proj.name} onChange={(e) => setProj({ ...proj, name: e.target.value })} />
                   <input className={inputCls} placeholder="Location" value={proj.location} onChange={(e) => setProj({ ...proj, location: e.target.value })} />
@@ -79,7 +104,9 @@ export default function Workforce() {
                   <input className={inputCls} placeholder="Budget (₹)" type="number" value={proj.budget} onChange={(e) => setProj({ ...proj, budget: e.target.value })} />
                 </div>
                 <DialogFooter>
-                  <button data-testid="save-project-button" disabled={!proj.name || addProject.isPending} onClick={() => addProject.mutate()} className="bg-[#EA580C] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200 disabled:opacity-50">Create</button>
+                  <button data-testid="save-project-button" disabled={!proj.name || saveProject.isPending} onClick={() => saveProject.mutate()} className="bg-[#EA580C] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200 disabled:opacity-50">
+                    {saveProject.isPending ? "Saving…" : (editingProject ? "Save" : "Create")}
+                  </button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
@@ -116,6 +143,53 @@ export default function Workforce() {
           </div>
         }
       />
+
+      {/* Projects section */}
+      {projects && projects.length > 0 && (
+        <div className="mb-8" data-testid="projects-section">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Buildings size={18} weight="duotone" className="text-[#EA580C]" />
+              <h2 className="font-display font-bold text-lg">Projects</h2>
+              <span className="text-xs text-[#71717A]">({projects.length})</span>
+            </div>
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-px bg-[#E4E4E7] border border-[#E4E4E7]">
+            {projects.map((p) => (
+              <div key={p.id} data-testid={`project-card-${p.id}`} className="bg-white p-5 flex flex-col gap-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h3 className="font-display font-bold text-base leading-tight truncate" title={p.name}>{p.name}</h3>
+                    {p.location && <p className="text-xs text-[#71717A] flex items-center gap-1 mt-0.5"><MapPin size={12} weight="bold" />{p.location}</p>}
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button data-testid={`edit-project-${p.id}`} onClick={() => openEditProject(p)} className="p-1.5 text-[#71717A] hover:text-[#EA580C] transition-colors duration-200" title="Edit project"><PencilSimple size={15} weight="bold" /></button>
+                    <button
+                      data-testid={`delete-project-${p.id}`}
+                      onClick={() => {
+                        const wc = workersInProject(p.id);
+                        const msg = wc > 0
+                          ? `Delete "${p.name}"? ${wc} worker(s) will be unassigned but not deleted.`
+                          : `Delete "${p.name}"?`;
+                        if (window.confirm(msg)) delProject.mutate(p.id);
+                      }}
+                      className="p-1.5 text-[#71717A] hover:text-[#DC2626] transition-colors duration-200"
+                      title="Delete project"
+                    >
+                      <Trash size={15} weight="bold" />
+                    </button>
+                  </div>
+                </div>
+                {p.client && <p className="text-xs text-[#3f3f46] flex items-center gap-1"><User size={12} weight="bold" />{p.client}</p>}
+                <div className="flex items-center justify-between mt-1 pt-2 border-t border-[#F4F4F5]">
+                  <Badge tone="accent">{workersInProject(p.id)} worker{workersInProject(p.id) === 1 ? "" : "s"}</Badge>
+                  {p.budget > 0 && <span className="text-xs font-mono text-[#71717A]">Budget: ₹{Number(p.budget).toLocaleString("en-IN")}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {workers?.length === 0 ? (
         <div className="border border-[#E4E4E7] p-12 text-center">
