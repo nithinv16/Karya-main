@@ -42,12 +42,21 @@ Karya-main repo (construction ops platform: workforce, payroll, subcontractors, 
 
 ## Testing
 - iteration_20.json: 12/12 backend pytest pass, all frontend flows pass (mobile nav, sheet, FAB, Telegram card, desktop regression)
-- Regression suite: /app/backend/tests/test_iteration20_telegram.py
+- iteration_21.json (2026-07, bug fix): 9/9 backend pytest pass — Telegram webhook race-condition fix (preview↔production) verified end-to-end.
+- Regression suite: /app/backend/tests/test_iteration20_telegram.py, /app/backend/tests/test_iteration21_telegram_link_race.py
 - QA creds: Bearer test_session_karya1 (see memory/test_credentials.md)
+
+## Bug Fixes (2026-07)
+- **Telegram "That linking code isn't valid" bug**: A Telegram bot has ONE global webhook. Preview + Production backends were both auto-registering it on startup, so codes generated in one env's isolated Mongo were validated by the OTHER env's backend → "invalid code". Fix:
+  - `_tg_autoregister_webhook` now SKIPS on preview host (`preview.emergentagent.com`); override via `TELEGRAM_AUTO_REGISTER_WEBHOOK=true`.
+  - `POST /api/telegram/link/code` now atomically re-claims the webhook for the calling backend, guaranteeing `/start CODE` lands where the code lives.
+  - "invalid code" reply is now actionable (tells user to regenerate on the same Karya URL they signed up on).
+  - `_handle_tg_start` also tolerates whitespace / `@botusername` prefixes on the code arg.
 
 ## Backlog / Next
 - P1: Expenses page in web UI (receipts currently visible via Org Memory; db.expenses has structured data)
 - P1: Let user pick project when generating /report from Telegram (currently most-recent project)
 - P2: Telegram notifications push (compliance deadlines, payroll dues)
-- P2: Split server.py into modules (~2500 lines)
+- P2: Split server.py into modules (~2545 lines) — Telegram surface (~700 lines) is a good extraction candidate.
 - P2: WhatsApp (Twilio) still inactive — needs real Twilio creds
+- P2: Replace preview-host substring match with dedicated `IS_PREVIEW` env flag (brittle if domain changes)
