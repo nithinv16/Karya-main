@@ -1,5 +1,8 @@
 # Clerkworks.OS — AI Operating System for Construction
 
+## Changelog
+- 2026-02: Fixed post-login redirect bug — AuthCallback now uses `window.location.replace('/dashboard')` after cookie exchange to avoid react-router v7 hash-retention race. Verified via 4/4 Playwright tests (iteration_8.json).
+
 ## Original Problem Statement
 Build an AI-native operating system for the construction industry (India) solving informal workforce management, operational knowledge capture, compliance tracking, and process standardization. Six pillars: Workforce Intelligence, Compliance Intelligence (AI Bureaucracy Agent), Dynamic SOP Generation, Organizational Knowledge Management, Voice-First Operations, and Project Intelligence. Construction is the entry vertical; long-term vision is an operating backbone for fragmented/informal project-based economies.
 

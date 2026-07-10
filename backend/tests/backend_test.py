@@ -197,7 +197,6 @@ class TestFeed:
     def test_fetch_live(self, created):
         r = requests.post(f"{BASE_URL}/api/feed/fetch", headers=H, timeout=120)
         assert r.status_code == 200
-        added = r.json().get("added", 0)
         # may be 0 if all urls already exist, but items should exist in list
         r2 = requests.get(f"{BASE_URL}/api/feed", headers=H, timeout=15)
         items = r2.json()
