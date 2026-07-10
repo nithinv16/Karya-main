@@ -1,2 +1,10 @@
 /* app-level styles */
 .App { min-height: 100vh; }
+
+.fade-up-fast {
+  animation: fadeUpFast 500ms ease-out both;
+}
+@keyframes fadeUpFast {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

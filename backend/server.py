@@ -1299,13 +1299,7 @@ async def generate_report(body: ReportGenIn, user: dict = Depends(get_current_us
     # Optional auto-send on generation
     if body.whatsapp_send:
         numbers = await _resolve_report_recipients(uid, body.project_id, body.whatsapp_audience or {}, body.whatsapp_extra_numbers or [])
-        media_urls = []
-        if BACKEND_PUBLIC_URL:
-            for p in photos[:3]:
-                # signed via ?auth= (token belongs to owner; images are private)
-                # NOTE: we can't send owner's session token — instead we omit media if unable to sign publicly.
-                pass  # keep media empty unless a public URL scheme is added
-        result = await asyncio.to_thread(_send_whatsapp_batch, numbers, _format_report_message(doc), media_urls or None)
+        result = await asyncio.to_thread(_send_whatsapp_batch, numbers, _format_report_message(doc), None)
         await db.daily_reports.update_one({"id": doc["id"]}, {"$set": {"whatsapp": result}})
         doc["whatsapp"] = result
     return doc
