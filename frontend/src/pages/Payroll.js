@@ -5,6 +5,7 @@ import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Money, Plus, ArrowLeft } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import ExportMenu from "@/components/ExportMenu";
 
 const fmt = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
 const TXN_TYPES = ["payment", "advance", "bonus", "deduction", "food", "accommodation", "transport", "penalty", "wage"];
@@ -51,7 +52,17 @@ export default function Payroll() {
           overline="Settlement Ledger"
           title={selected.name}
           desc={`${selected.role} · ₹${selected.rate?.toLocaleString("en-IN")}/${selected.rate_type}`}
-          action={<button data-testid="add-txn-button" onClick={() => setOpen(true)} className="flex items-center gap-2 bg-[#EA580C] text-white px-4 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200"><Plus size={16} weight="bold" /> Add entry</button>}
+          action={
+            <div className="flex flex-wrap gap-2">
+              <ExportMenu
+                endpoint={`/workers/${selected.id}/ledger/export`}
+                filename={`Ledger - ${selected.name}`}
+                label="Export ledger"
+                testId="ledger-export-menu"
+              />
+              <button data-testid="add-txn-button" onClick={() => setOpen(true)} className="flex items-center gap-2 bg-[#EA580C] text-white px-4 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200"><Plus size={16} weight="bold" /> Add entry</button>
+            </div>
+          }
         />
         {ledger.isLoading ? <Spinner /> : (
           <>
@@ -102,7 +113,21 @@ export default function Payroll() {
 
   return (
     <div className="p-5 sm:p-8">
-      <PageHeader overline="Payroll & Settlements" title="Settlements" desc="Multi-rate wages, advances, deductions and live net payable for every worker. Click a worker to open their ledger." />
+      <PageHeader
+        overline="Payroll & Settlements"
+        title="Settlements"
+        desc="Multi-rate wages, advances, deductions and live net payable for every worker. Click a worker to open their ledger."
+        action={
+          workers?.length > 0 ? (
+            <ExportMenu
+              endpoint="/payroll/export"
+              filename="Payroll Settlements"
+              label="Export settlements"
+              testId="settlements-export-menu"
+            />
+          ) : null
+        }
+      />
       {workers?.length === 0 ? (
         <div className="border border-[#E4E4E7] p-12 text-center"><Money size={36} weight="duotone" className="mx-auto text-[#EA580C] mb-3" /><p className="text-[#71717A] text-sm">No workers yet.</p></div>
       ) : (

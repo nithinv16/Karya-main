@@ -1220,6 +1220,270 @@ async def insights_briefing(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------- daily reports
 # (moved to routes/reports.py)
 
+# ---------------------------------------------------------------- exports (pdf/docx/xlsx)
+from exports import build_pdf, build_docx, build_xlsx, Section as ExportSection, MIME as EXPORT_MIME, safe_filename
+from fastapi.responses import Response
+
+
+def _rupees(n) -> str:
+    return f"Rs. {int(n or 0):,}"
+
+
+def _export_response(fmt: str, data: bytes, filename_stem: str) -> Response:
+    if fmt not in EXPORT_MIME:
+        raise HTTPException(status_code=400, detail="format must be pdf, docx or xlsx")
+    fname = safe_filename(filename_stem, fmt)
+    return Response(
+        content=data,
+        media_type=EXPORT_MIME[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@api.get("/reports/{report_id}/export")
+async def export_daily_report(report_id: str, format: str = "pdf", user: dict = Depends(get_current_user)):
+    rec = await db.daily_reports.find_one({"id": report_id, "owner_id": user["user_id"]}, {"_id": 0})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Report not found")
+    c = rec.get("content") or {}
+    title = c.get("title") or "Daily Site Report"
+    subtitle = f"{rec.get('project_name') or 'Site'} · {rec.get('report_date') or ''}"
+    if rec.get("location"):
+        subtitle += f" · {rec['location']}"
+
+    # Same-day attendance & wage totals for this project (adds operational context).
+    q_att = {"owner_id": user["user_id"], "date": rec.get("report_date")}
+    q_tx = {"owner_id": user["user_id"], "date": rec.get("report_date"), "type": "wage"}
+    if rec.get("project_id"):
+        q_att["project_id"] = rec["project_id"]
+    att_docs = await db.attendance.find(q_att, {"_id": 0}).to_list(2000)
+    present_today = sum(a.get("count", 1) for a in att_docs)
+    tx_docs = await db.transactions.find(q_tx, {"_id": 0}).to_list(2000)
+    if rec.get("project_id"):
+        # Filter wage txns to workers belonging to this project.
+        project_workers = await db.workers.find({"owner_id": user["user_id"], "project_id": rec["project_id"]}, {"_id": 0, "id": 1}).to_list(2000)
+        pw_ids = {w["id"] for w in project_workers}
+        tx_docs = [t for t in tx_docs if t.get("worker_id") in pw_ids]
+    wage_today = sum(t["amount"] for t in tx_docs)
+
+    sections = []
+    if c.get("summary"):
+        sections.append(ExportSection(heading="Summary", paragraphs=[c["summary"]]))
+    if c.get("weather"):
+        sections.append(ExportSection(heading="Weather", paragraphs=[c["weather"]]))
+    if c.get("work_completed"):
+        sections.append(ExportSection(heading="Work Completed", bullets=list(c["work_completed"])))
+    if c.get("manpower"):
+        sections.append(ExportSection(heading="Manpower", paragraphs=[c["manpower"]]))
+    # Operational panel (attendance + spend for the day on this project).
+    sections.append(ExportSection(
+        heading="Attendance & Spend (this day)",
+        table=[["Metric", "Value"],
+               ["Workers present", str(present_today)],
+               ["Wage cost", _rupees(wage_today)],
+               ["Attendance entries", str(len(att_docs))]],
+    ))
+    if c.get("materials_used"):
+        sections.append(ExportSection(heading="Materials Used", bullets=list(c["materials_used"])))
+    if c.get("issues_delays"):
+        sections.append(ExportSection(heading="Issues / Delays", bullets=list(c["issues_delays"])))
+    if c.get("safety_observations"):
+        sections.append(ExportSection(heading="Safety Observations", bullets=list(c["safety_observations"])))
+    if c.get("next_steps"):
+        sections.append(ExportSection(heading="Next Steps", bullets=list(c["next_steps"])))
+    if rec.get("notes_text"):
+        sections.append(ExportSection(heading="Original Field Notes", paragraphs=[rec["notes_text"]]))
+
+    if format in ("pdf", "docx"):
+        # Attach photos (up to 4) only for PDF/DOCX.
+        photo_bytes: List[bytes] = []
+        for p in (rec.get("photos") or [])[:4]:
+            if (p.get("content_type") or "").startswith("image/") and p.get("path"):
+                try:
+                    data, _ = await asyncio.to_thread(get_object, p["path"])
+                    photo_bytes.append(data)
+                except Exception as e:
+                    logger.warning(f"Report export: photo fetch failed: {e}")
+        if photo_bytes:
+            sections.append(ExportSection(heading="Photos", images=photo_bytes))
+
+    stem = f"Daily Report - {rec.get('project_name') or 'Site'} - {rec.get('report_date') or ''}"
+    if format == "xlsx":
+        rows = [["Field", "Value"], ["Title", title], ["Subtitle", subtitle]]
+        for s in sections:
+            for p in s.paragraphs:
+                rows.append([s.heading or "", p])
+            for b in s.bullets:
+                rows.append([s.heading or "", f"- {b}"])
+            if s.table:
+                for r in s.table[1:]:
+                    rows.append(r)
+        data = build_xlsx(title, [{"name": "Report", "rows": rows}])
+    elif format == "docx":
+        data = build_docx(title, subtitle, sections)
+    else:
+        data = build_pdf(title, subtitle, sections)
+    return _export_response(format, data, stem)
+
+
+@api.get("/workers/{worker_id}/ledger/export")
+async def export_worker_ledger(worker_id: str, format: str = "pdf", user: dict = Depends(get_current_user)):
+    worker = await db.workers.find_one({"id": worker_id, "owner_id": user["user_id"]}, {"_id": 0})
+    if not worker:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    txns = await db.transactions.find({"worker_id": worker_id, "owner_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    s = ledger_summary(txns)
+    project_name = "—"
+    if worker.get("project_id"):
+        p = await db.projects.find_one({"id": worker["project_id"], "owner_id": user["user_id"]}, {"_id": 0})
+        if p:
+            project_name = p["name"]
+
+    title = f"Settlement Ledger — {worker['name']}"
+    subtitle = f"{worker.get('role', '')} · Rs.{int(worker.get('rate') or 0):,}/{worker.get('rate_type', '')} · Project: {project_name}"
+
+    summary_table = [
+        ["Metric", "Amount"],
+        ["Earned", _rupees(s["earned"])],
+        ["Advances", _rupees(s["advances"])],
+        ["Deductions", _rupees(s["deductions"])],
+        ["Paid", _rupees(s["paid"])],
+        ["Net Payable", _rupees(s["balance"])],
+    ]
+    txn_table = [["Date", "Type", "Amount", "Note"]] + [
+        [t.get("date", ""), t.get("type", ""), _rupees(t.get("amount", 0)), t.get("note", "")]
+        for t in txns
+    ]
+    sections = [
+        ExportSection(heading="Summary", table=summary_table),
+        ExportSection(heading="Transactions", table=txn_table if len(txn_table) > 1 else [["Date", "Type", "Amount", "Note"], ["", "No entries", "", ""]]),
+    ]
+    stem = f"Ledger - {worker['name']}"
+    if format == "xlsx":
+        data = build_xlsx(title, [
+            {"name": "Summary", "rows": summary_table},
+            {"name": "Transactions", "rows": txn_table if len(txn_table) > 1 else [txn_table[0], ["", "No entries", "", ""]]},
+        ])
+    elif format == "docx":
+        data = build_docx(title, subtitle, sections)
+    else:
+        data = build_pdf(title, subtitle, sections)
+    return _export_response(format, data, stem)
+
+
+@api.get("/payroll/export")
+async def export_settlements(format: str = "xlsx", user: dict = Depends(get_current_user)):
+    """Full settlements table across every worker (multi-sheet xlsx / summary table pdf/docx)."""
+    uid = user["user_id"]
+    workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    txns = await db.transactions.find({"owner_id": uid}, {"_id": 0}).to_list(20000)
+    projects = await db.projects.find({"owner_id": uid}, {"_id": 0}).to_list(500)
+    pmap = {p["id"]: p["name"] for p in projects}
+
+    header = ["Worker", "Trade", "Project", "Rate", "Earned", "Advances", "Deductions", "Paid", "Net Payable"]
+    rows: List[list] = [header]
+    for w in workers:
+        wt = [t for t in txns if t.get("worker_id") == w["id"]]
+        s = ledger_summary(wt)
+        rows.append([
+            w.get("name", ""),
+            w.get("role", ""),
+            pmap.get(w.get("project_id"), "—"),
+            f"Rs.{int(w.get('rate') or 0):,}/{w.get('rate_type', '')}",
+            _rupees(s["earned"]),
+            _rupees(s["advances"]),
+            _rupees(s["deductions"]),
+            _rupees(s["paid"]),
+            _rupees(s["balance"]),
+        ])
+    title = "Payroll Settlements"
+    subtitle = f"{len(workers)} workers · exported {today_str()}"
+    if format == "xlsx":
+        # Include a second sheet with the raw transactions ledger.
+        tx_rows = [["Date", "Worker", "Type", "Amount", "Note"]]
+        wmap = {w["id"]: w["name"] for w in workers}
+        for t in txns:
+            tx_rows.append([
+                t.get("date", ""),
+                wmap.get(t.get("worker_id"), "?"),
+                t.get("type", ""),
+                _rupees(t.get("amount", 0)),
+                t.get("note", ""),
+            ])
+        data = build_xlsx(title, [
+            {"name": "Settlements", "rows": rows},
+            {"name": "Transactions", "rows": tx_rows},
+        ])
+    elif format == "docx":
+        data = build_docx(title, subtitle, [ExportSection(table=rows)])
+    else:
+        data = build_pdf(title, subtitle, [ExportSection(table=rows)])
+    return _export_response(format, data, "Payroll Settlements")
+
+
+@api.get("/insights/export")
+async def export_insights(format: str = "pdf", user: dict = Depends(get_current_user)):
+    data = await insights(user)
+    briefing = await insights_briefing(user)
+    preds = data.get("predictions", {}) or {}
+    title = "Predictive Insights"
+    subtitle = f"Exported {today_str()}"
+
+    pred_rows = [["Risk", "Level", "Metric", "Detail"]]
+    for k, meta in preds.items():
+        pred_rows.append([k.replace("_", " ").title(), meta.get("level", "-"), meta.get("metric", ""), meta.get("detail", "")])
+
+    sc_rows = [["Subcontractor", "Trade", "Score", "Grade", "Deductions", "Pending"]]
+    for s in data.get("subcontractor_scorecards", []) or []:
+        sc_rows.append([s.get("name", ""), s.get("trade", ""), s.get("score", 0), s.get("rating", ""), _rupees(s.get("deductions", 0)), _rupees(s.get("pending", 0))])
+
+    burn_rows = [["Project", "Labour Spend", "Budget", "% of Budget"]]
+    for p in data.get("project_overrun", []) or []:
+        burn_rows.append([p.get("name", ""), _rupees(p.get("spend", 0)), _rupees(p.get("budget", 0)), f"{p.get('labour_pct_of_budget', 0)}%"])
+
+    ai_lines = [l for l in (briefing.get("ai_summary") or "").split("\n") if l.strip()]
+
+    if format == "xlsx":
+        out = build_xlsx(title, [
+            {"name": "Predictions", "rows": pred_rows},
+            {"name": "Subcontractors", "rows": sc_rows},
+            {"name": "Project Burn", "rows": burn_rows},
+            {"name": "AI Briefing", "rows": [["Insight"]] + [[l] for l in ai_lines]},
+        ])
+    else:
+        sections = [
+            ExportSection(heading="Risk Predictions", table=pred_rows),
+            ExportSection(heading="Subcontractor Scorecards", table=sc_rows if len(sc_rows) > 1 else [sc_rows[0], ["No data", "", "", "", "", ""]]),
+            ExportSection(heading="Project Labour Burn", table=burn_rows if len(burn_rows) > 1 else [burn_rows[0], ["No data", "", "", ""]]),
+        ]
+        if ai_lines:
+            sections.append(ExportSection(heading="AI Briefing", bullets=ai_lines))
+        if format == "docx":
+            out = build_docx(title, subtitle, sections)
+        else:
+            out = build_pdf(title, subtitle, sections)
+    return _export_response(format, out, "Predictive Insights")
+
+
+@api.get("/compliance/export")
+async def export_compliance(format: str = "pdf", user: dict = Depends(get_current_user)):
+    items = await db.compliance.find({"owner_id": user["user_id"]}, {"_id": 0}).sort("due_date", 1).to_list(2000)
+    header = ["Title", "Category", "Due Date", "Status", "Notes"]
+    rows = [header] + [
+        [it.get("title", ""), it.get("category", ""), it.get("due_date", ""), it.get("status", "pending"), it.get("notes", "")]
+        for it in items
+    ]
+    title = "Compliance Register"
+    subtitle = f"{len(items)} items · exported {today_str()}"
+    if format == "xlsx":
+        out = build_xlsx(title, [{"name": "Compliance", "rows": rows}])
+    elif format == "docx":
+        out = build_docx(title, subtitle, [ExportSection(table=rows if len(rows) > 1 else [header, ["No items", "", "", "", ""]])])
+    else:
+        out = build_pdf(title, subtitle, [ExportSection(table=rows if len(rows) > 1 else [header, ["No items", "", "", "", ""]])])
+    return _export_response(format, out, "Compliance Register")
+
+
 # ---------------------------------------------------------------- app wiring
 
 @api.get("/")

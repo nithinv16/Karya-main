@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { TrendUp, Warning, Handshake, Sparkle, UsersThree, CurrencyInr, ClockCountdown } from "@phosphor-icons/react";
+import ExportMenu from "@/components/ExportMenu";
 
 const fmt = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
 const levelTone = (l) => (l === "high" ? "critical" : l === "medium" ? "warning" : "success");
@@ -29,6 +30,14 @@ export default function Insights() {
         overline="Project Intelligence"
         title="Predictive Insights"
         desc="Early-warning signals across labour, cost and schedule — plus AI-scored subcontractor performance, so you act before problems compound."
+        action={
+          <ExportMenu
+            endpoint="/insights/export"
+            filename="Predictive Insights"
+            label="Export insights"
+            testId="insights-export-menu"
+          />
+        }
       />
 
       {/* Risk predictions */}

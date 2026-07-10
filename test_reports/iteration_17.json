@@ -1,0 +1,23 @@
+{
+  "summary": "Iteration 17 validates Phase 2 report exports (PDF/DOCX/XLSX). Backend pytest: 23/23 tests pass across all 5 export endpoints (daily report, worker ledger, payroll settlements, insights, compliance) x 3 formats + invalid-format 400 checks + cross-owner 404 + unauth. File signatures verified: PDF starts with %PDF and DOCX/XLSX are valid zip (PK). MIME types + Content-Disposition attachment headers correct on every response. Ledger math confirmed inside the exported DOCX/XLSX: earned Rs.11,000 · advances Rs.2,000 · deductions Rs.700 · paid Rs.5,000 · net Rs.3,300. Worker ledger XLSX has 2 sheets (Summary + Transactions). Payroll XLSX has 2 sheets (Settlements + Transactions). Insights XLSX has 4 sheets (Predictions/Subcontractors/Project Burn/AI Briefing). Daily-report DOCX contains all 8 sections (Summary/Work Completed/Manpower/Materials/Issues/Safety/Next Steps/Attendance & Spend). Frontend UI: all 5 dropdowns (settlements-export-menu, ledger-export-menu, compliance-export-menu, insights-export-menu, report-export-menu) render, open, and expose their -pdf/-docx/-xlsx items; each endpoint returns valid bytes above the required minimum (pdf>500, docx/xlsx>1000). Regression clean on /dashboard /workforce /payroll /reports /insights /compliance /feed /sops.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iteration17_exports.py", "/app/test_reports/pytest/iter17.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "exports.py build_xlsx() uses PatternFill('solid', fgColor='09090B') without an explicit `start_color` — works in current openpyxl but the safer signature is PatternFill(start_color='09090B', end_color='09090B', fill_type='solid'). Cosmetic.",
+    "server.py export_daily_report: attendance/wage figures are computed even for xlsx (only PDF/DOCX need them). Minor duplicated I/O when the report has no photos. Not a bug — performance nit.",
+    "server.py export_insights: calls both insights() and insights_briefing() sequentially; briefing internally calls insights() again → duplicated DB scans + LLM call every time an insight export is requested. Consider passing the already-computed insight data into a shared helper to avoid double work + double LLM cost.",
+    "DailyReports.js report card wraps a <button> containing an <h3> inside a parent <div className='...flex flex-col'> that has separate action buttons above it. There's no outer role/testid to open the modal via a single click. Consider a data-testid='open-report-{id}' on the title button for cleaner test targeting.",
+    "ExportMenu.js: when a format fails, the toast prints e?.response?.data?.detail — but responseType is 'blob' so `data` is a Blob (not JSON) and the .detail lookup will always be undefined. If a real error is returned (e.g. 400 invalid format), the user only sees 'server error'. Consider parsing the blob as JSON on error responses.",
+    "server.py _rupees uses 'Rs.' literal to avoid PDF-font issues with the ₹ symbol — good choice. But the UI shows ₹ and the exported files show 'Rs.' — a small inconsistency worth documenting."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration17_exports.py"],
+  "success_rate": {"backend": "100% (23/23 iter17 export tests)", "frontend": "100% (5/5 export dropdowns render & all 15 endpoints return valid bytes)"},
+  "test_credentials": "Bearer test_session_karya1 for user test-user-karya1 in karya_database.",
+  "seed_data_creation": "Backend pytest self-seeds/cleans (TEST17_ prefix). UI test data (ui17_proj/wrk/rep/cmp + 6 txns) was seeded via mongosh and CLEANED up after the test — final workers/projects for test user is 0.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 exports verified end-to-end. To re-run: `pytest backend/tests/test_iteration17_exports.py`. The exports.py module is shared — any future export addition should reuse Section/build_pdf/build_docx/build_xlsx. Note the frontend/.env REACT_APP_BACKEND_URL is `karya-setup.preview.emergentagent.com` while backend/.env BACKEND_PUBLIC_URL + CORS_ORIGINS still list the older `ff93930f-...` host; ingress serves both, but consider consolidating.",
+  "rca of the issue": "N/A — no bugs discovered. Only minor code-review nits above."
+}

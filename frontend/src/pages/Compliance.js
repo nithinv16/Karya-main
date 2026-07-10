@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { ShieldCheck, Plus, Sparkle, Warning } from "@phosphor-icons/react";
 import { FileUpload, Attachment } from "@/components/FileUpload";
 import { toast } from "sonner";
+import ExportMenu from "@/components/ExportMenu";
 
 const CATS = ["permit", "license", "insurance", "registration", "safety", "tender"];
 
@@ -38,7 +39,16 @@ export default function Compliance() {
         title="Bureaucracy Agent"
         desc="Track permits, licenses, insurance & registrations. Upload a document and the AI explains what changed, who's affected, the deadline and penalties."
         action={
-          <Dialog open={open} onOpenChange={setOpen}>
+          <div className="flex flex-wrap gap-2">
+            {items?.length > 0 && (
+              <ExportMenu
+                endpoint="/compliance/export"
+                filename="Compliance Register"
+                label="Export"
+                testId="compliance-export-menu"
+              />
+            )}
+            <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild><button data-testid="add-compliance-button" className="flex items-center gap-2 bg-[#EA580C] text-white px-4 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200"><Plus size={16} weight="bold" /> Add Item</button></DialogTrigger>
             <DialogContent className="rounded-none border-2 border-[#09090B]">
               <DialogHeader><DialogTitle className="font-display">Add Compliance Item</DialogTitle><DialogDescription>Track a permit, license, insurance or registration and analyze it with AI.</DialogDescription></DialogHeader>
@@ -65,6 +75,7 @@ export default function Compliance() {
               <DialogFooter><button data-testid="save-compliance-button" disabled={!form.title || add.isPending} onClick={() => add.mutate()} className="bg-[#EA580C] text-white px-5 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200 disabled:opacity-50">Add</button></DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         }
       />
 

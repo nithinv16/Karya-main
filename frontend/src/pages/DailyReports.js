@@ -4,6 +4,7 @@ import api, { API, getToken } from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { FileUpload } from "@/components/FileUpload";
 import VoiceButton from "@/components/VoiceButton";
+import ExportMenu from "@/components/ExportMenu";
 import { ClipboardText, Sparkle, MapPin, Trash, Camera, ListChecks, ShieldWarning, Wrench, CheckCircle, ArrowBendUpRight, UsersThree, PaperPlaneTilt } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
@@ -235,6 +236,14 @@ export default function DailyReports() {
               </div>
               <h2 className="font-display font-black text-2xl tracking-tight mt-2">{active.content?.title || "Daily Report"}</h2>
               {active.content?.summary && <p className="text-sm text-[#71717A] mt-2">{active.content.summary}</p>}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <ExportMenu
+                  endpoint={`/reports/${active.id}/export`}
+                  filename={`Daily Report - ${active.project_name || "Site"} - ${active.report_date || ""}`.trim()}
+                  label="Export report"
+                  testId="report-export-menu"
+                />
+              </div>
             </div>
             <div className="p-6 space-y-6 text-sm">
               {active.photos?.length > 0 && (
