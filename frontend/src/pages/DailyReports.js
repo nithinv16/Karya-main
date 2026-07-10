@@ -4,14 +4,22 @@ import api, { API, getToken } from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { FileUpload } from "@/components/FileUpload";
 import VoiceButton from "@/components/VoiceButton";
-import { ClipboardText, Sparkle, MapPin, Trash, Camera, ListChecks, ShieldWarning, Wrench, CheckCircle, ArrowBendUpRight, UsersThree } from "@phosphor-icons/react";
+import { ClipboardText, Sparkle, MapPin, Trash, Camera, ListChecks, ShieldWarning, Wrench, CheckCircle, ArrowBendUpRight, UsersThree, PaperPlaneTilt } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 export default function DailyReports() {
   const qc = useQueryClient();
-  const [form, setForm] = useState({ project_id: "", location: "", notes_text: "", photos: [], report_date: new Date().toISOString().slice(0, 10) });
+  const emptyForm = {
+    project_id: "", location: "", notes_text: "", photos: [],
+    report_date: new Date().toISOString().slice(0, 10),
+    whatsapp_send: true,
+    audience: { client: true, subcontractors: true, labour: false },
+    extra_numbers: "",
+  };
+  const [form, setForm] = useState(emptyForm);
   const [active, setActive] = useState(null);
   const [locating, setLocating] = useState(false);
+  const [detailAudience, setDetailAudience] = useState({ client: true, subcontractors: false, labour: false, extra: "" });
 
   const { data: reports, isLoading } = useQuery({ queryKey: ["reports"], queryFn: async () => (await api.get("/reports")).data });
   const { data: projects } = useQuery({ queryKey: ["projects"], queryFn: async () => (await api.get("/projects")).data });
@@ -23,14 +31,34 @@ export default function DailyReports() {
       notes_text: form.notes_text,
       photo_ids: form.photos.map((p) => p.id),
       report_date: form.report_date,
+      whatsapp_send: form.whatsapp_send,
+      whatsapp_audience: form.audience,
+      whatsapp_extra_numbers: (form.extra_numbers || "").split(",").map((s) => s.trim()).filter(Boolean),
     })).data,
     onSuccess: (d) => {
       toast.success("Daily report generated");
+      if (d.whatsapp?.sent > 0) toast.success(`WhatsApp sent to ${d.whatsapp.sent} recipient${d.whatsapp.sent === 1 ? "" : "s"}`);
+      else if (form.whatsapp_send && d.whatsapp?.errors?.length)
+        toast.warning(`WhatsApp: ${d.whatsapp.errors[0]}`);
       setActive(d);
-      setForm({ project_id: "", location: "", notes_text: "", photos: [], report_date: new Date().toISOString().slice(0, 10) });
+      setForm(emptyForm);
       qc.invalidateQueries({ queryKey: ["reports"] });
     },
     onError: () => toast.error("Report generation failed"),
+  });
+
+  const sendWhatsapp = useMutation({
+    mutationFn: async () => (await api.post(`/reports/${active.id}/whatsapp`, {
+      audience: { client: detailAudience.client, subcontractors: detailAudience.subcontractors, labour: detailAudience.labour },
+      extra_numbers: (detailAudience.extra || "").split(",").map((s) => s.trim()).filter(Boolean),
+    })).data,
+    onSuccess: (r) => {
+      if (r.sent > 0) toast.success(`Sent to ${r.sent} recipient${r.sent === 1 ? "" : "s"} on WhatsApp`);
+      else toast.warning(r.errors?.[0] || "Nothing sent");
+      setActive((a) => a ? { ...a, whatsapp: r } : a);
+      qc.invalidateQueries({ queryKey: ["reports"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "WhatsApp send failed"),
   });
 
   const del = useMutation({
@@ -91,6 +119,47 @@ export default function DailyReports() {
                 ))}
               </div>
             )}
+
+            <div data-testid="whatsapp-panel" className="border-2 border-dashed border-[#E4E4E7] p-3 space-y-2">
+              <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                <input
+                  data-testid="whatsapp-toggle"
+                  type="checkbox"
+                  checked={form.whatsapp_send}
+                  onChange={(e) => setForm({ ...form, whatsapp_send: e.target.checked })}
+                  className="w-4 h-4 accent-[#EA580C]"
+                />
+                Auto-send on WhatsApp when generated
+              </label>
+              {form.whatsapp_send && (
+                <div className="space-y-2 pl-6">
+                  {[
+                    { key: "client", label: "Client on project" },
+                    { key: "subcontractors", label: "Subcontractors on project" },
+                    { key: "labour", label: "Labour on project" },
+                  ].map((a) => (
+                    <label key={a.key} className="flex items-center gap-2 text-xs cursor-pointer text-[#71717A]">
+                      <input
+                        data-testid={`audience-${a.key}`}
+                        type="checkbox"
+                        checked={!!form.audience[a.key]}
+                        onChange={(e) => setForm({ ...form, audience: { ...form.audience, [a.key]: e.target.checked } })}
+                        className="w-3.5 h-3.5 accent-[#EA580C]"
+                      />
+                      {a.label}
+                    </label>
+                  ))}
+                  <input
+                    data-testid="audience-extra"
+                    className="w-full border border-[#E4E4E7] focus:border-[#EA580C] outline-none px-2 py-1.5 text-xs"
+                    placeholder="Extra numbers (comma-separated, +91…)"
+                    value={form.extra_numbers}
+                    onChange={(e) => setForm({ ...form, extra_numbers: e.target.value })}
+                  />
+                </div>
+              )}
+            </div>
+
             <button data-testid="generate-report-button" disabled={(!form.notes_text.trim() && form.photos.length === 0) || gen.isPending} onClick={() => gen.mutate()}
               className="w-full flex items-center justify-center gap-2 bg-[#EA580C] text-white px-4 py-3 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200 disabled:opacity-50">
               <Sparkle size={16} weight="fill" /> {gen.isPending ? "Writing report…" : "Generate Daily Report"}
@@ -167,6 +236,48 @@ export default function DailyReports() {
               {active.content?.safety_observations?.length > 0 && <Section icon={CheckCircle} title="Safety Observations"><BulletList items={active.content.safety_observations} /></Section>}
               {active.content?.next_steps?.length > 0 && <Section icon={ArrowBendUpRight} title="Next Steps"><BulletList items={active.content.next_steps} /></Section>}
               {active.notes_text && <Section icon={ClipboardText} title="Original Field Notes"><p className="text-[#71717A] italic">"{active.notes_text}"</p></Section>}
+
+              <Section icon={PaperPlaneTilt} title="Send on WhatsApp">
+                {active.whatsapp?.sent > 0 && (
+                  <p data-testid="whatsapp-sent-status" className="text-xs text-green-700 mb-2">Already sent to {active.whatsapp.sent} recipient{active.whatsapp.sent === 1 ? "" : "s"}.</p>
+                )}
+                <div className="grid sm:grid-cols-3 gap-2 mb-2">
+                  {[
+                    { key: "client", label: "Client" },
+                    { key: "subcontractors", label: "Subcontractors" },
+                    { key: "labour", label: "Labour" },
+                  ].map((a) => (
+                    <label key={a.key} className="flex items-center gap-2 text-xs cursor-pointer border border-[#E4E4E7] px-3 py-2 hover:border-[#EA580C] transition-colors duration-200">
+                      <input
+                        data-testid={`detail-audience-${a.key}`}
+                        type="checkbox"
+                        checked={!!detailAudience[a.key]}
+                        onChange={(e) => setDetailAudience({ ...detailAudience, [a.key]: e.target.checked })}
+                        className="w-3.5 h-3.5 accent-[#EA580C]"
+                      />
+                      {a.label}
+                    </label>
+                  ))}
+                </div>
+                <input
+                  data-testid="detail-extra-numbers"
+                  className="w-full border border-[#E4E4E7] focus:border-[#EA580C] outline-none px-3 py-2 text-xs mb-2"
+                  placeholder="Extra numbers (comma-separated, +91…)"
+                  value={detailAudience.extra}
+                  onChange={(e) => setDetailAudience({ ...detailAudience, extra: e.target.value })}
+                />
+                <button
+                  data-testid="send-whatsapp-button"
+                  onClick={() => sendWhatsapp.mutate()}
+                  disabled={sendWhatsapp.isPending || (!detailAudience.client && !detailAudience.subcontractors && !detailAudience.labour && !detailAudience.extra?.trim())}
+                  className="flex items-center gap-2 bg-[#09090B] text-white px-4 py-2 text-xs font-semibold hover:bg-[#EA580C] transition-colors duration-200 disabled:opacity-50"
+                >
+                  <PaperPlaneTilt size={14} weight="fill" /> {sendWhatsapp.isPending ? "Sending…" : "Send on WhatsApp"}
+                </button>
+                {active.whatsapp?.errors?.length > 0 && (
+                  <p data-testid="whatsapp-errors" className="text-xs text-red-700 mt-2">{active.whatsapp.errors[0]}</p>
+                )}
+              </Section>
             </div>
           </div>
         </div>

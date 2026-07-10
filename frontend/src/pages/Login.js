@@ -16,6 +16,21 @@ const features = [
 
 export default function Login() {
   const authError = new URLSearchParams(window.location.search).get("auth_error");
+  const copyDiagnostics = async () => {
+    const info = [
+      `time: ${new Date().toISOString()}`,
+      `origin: ${window.location.origin}`,
+      `backend: ${process.env.REACT_APP_BACKEND_URL || "(unset)"}`,
+      `user_agent: ${navigator.userAgent}`,
+      `auth_error: ${authError || "(none)"}`,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(info);
+    } catch (e) {
+      // fallback if clipboard blocked
+      window.prompt("Copy diagnostics:", info);
+    }
+  };
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
       {/* Left: brand + form */}
@@ -48,6 +63,14 @@ export default function Login() {
             <div data-testid="auth-error-banner" className="mt-4 border border-red-500 bg-red-50 p-3 text-xs text-red-800 max-w-md break-all">
               <strong className="block mb-1">Sign-in failed:</strong>
               {authError}
+              <button
+                data-testid="copy-diagnostics-btn"
+                type="button"
+                onClick={copyDiagnostics}
+                className="mt-2 inline-block underline underline-offset-2 text-red-900 hover:text-red-700"
+              >
+                Copy diagnostics
+              </button>
             </div>
           )}
         </div>

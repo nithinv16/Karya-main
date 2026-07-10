@@ -16,6 +16,7 @@ import Sops from "@/pages/Sops";
 import Knowledge from "@/pages/Knowledge";
 import Insights from "@/pages/Insights";
 import DailyReports from "@/pages/DailyReports";
+import Onboarding from "@/pages/Onboarding";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -27,12 +28,22 @@ function Protected({ children }) {
     );
   }
   if (!user) return <Navigate to="/" replace />;
+  if (user.profile_complete === false) return <Navigate to="/onboarding" replace />;
+  return children;
+}
+
+function OnboardingGuard({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="min-h-screen" />;
+  if (!user) return <Navigate to="/" replace />;
+  if (user.profile_complete) return <Navigate to="/dashboard" replace />;
   return children;
 }
 
 function Home() {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen" />;
+  if (user && user.profile_complete === false) return <Navigate to="/onboarding" replace />;
   if (user) return <Navigate to="/dashboard" replace />;
   return <Login />;
 }
@@ -45,6 +56,14 @@ function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
+      <Route
+        path="/onboarding"
+        element={
+          <OnboardingGuard>
+            <Onboarding />
+          </OnboardingGuard>
+        }
+      />
       <Route
         element={
           <Protected>

@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import React, { useState, useEffect } from "react";
+import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import CommandBar from "@/components/CommandBar";
 import AIAssistant from "@/components/AIAssistant";
@@ -26,6 +26,18 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const [assistantOpen, setAssistantOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const [chipVisible, setChipVisible] = useState(false);
+  useEffect(() => {
+    // Fade the "Signed in as" chip in only on the Dashboard, once per mount.
+    if (location.pathname === "/dashboard") {
+      setChipVisible(false);
+      const t = setTimeout(() => setChipVisible(true), 220);
+      const h = setTimeout(() => setChipVisible(false), 6000);
+      return () => { clearTimeout(t); clearTimeout(h); };
+    }
+    setChipVisible(false);
+  }, [location.pathname]);
 
   return (
     <div className="min-h-screen flex bg-white">
@@ -85,6 +97,14 @@ export default function AppLayout() {
         {/* Top bar with command bar */}
         <header className="h-16 border-b border-[#E4E4E7] flex items-center gap-3 px-4 sm:px-6 sticky top-0 bg-white z-40">
           <CommandBar />
+          <div
+            data-testid="signed-in-chip"
+            aria-hidden={!chipVisible}
+            className={`hidden md:flex items-center gap-2 border border-[#09090B] px-3 py-1.5 text-xs font-mono shrink-0 transition-all duration-500 ease-out ${chipVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1 pointer-events-none"}`}
+          >
+            <span className="w-1.5 h-1.5 bg-[#EA580C] pulse-dot" />
+            Signed in as <span className="font-semibold text-[#09090B]">{user?.name?.split(" ")[0] || user?.email}</span>
+          </div>
           <NotificationBell />
           <button
             data-testid="open-assistant-button"

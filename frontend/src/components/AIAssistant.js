@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import api from "@/lib/api";
 import { Sparkle, X, PaperPlaneRight } from "@phosphor-icons/react";
+import VoiceButton from "@/components/VoiceButton";
 
 const suggestions = [
   "How much do I owe Rajesh?",
@@ -105,6 +106,14 @@ export default function AIAssistant({ open, onClose }) {
             onChange={(e) => setQ(e.target.value)}
             placeholder="Ask anything about your operations…"
             className="flex-1 border-2 border-[#E4E4E7] focus:border-[#EA580C] outline-none px-3 py-2.5 text-sm transition-colors duration-200"
+          />
+          <VoiceButton
+            showLang={false}
+            title="Speak your question"
+            onResult={(text) => {
+              setQ(text);
+              ask(text);
+            }}
           />
           <button
             data-testid="assistant-send-button"

@@ -21,6 +21,8 @@ from dotenv import load_dotenv
 from pypdf import PdfReader
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 from emergentintegrations.llm.openai import OpenAISpeechToText
+from twilio.rest import Client as TwilioClient
+from twilio.base.exceptions import TwilioRestException
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -35,6 +37,16 @@ EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 AUTH_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
 APP_NAME = "karya"
+
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_WHATSAPP_FROM = os.environ.get("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
+BACKEND_PUBLIC_URL = os.environ.get("BACKEND_PUBLIC_URL", "")  # optional; used for building media URLs
+
+def _twilio_client():
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
+        return None
+    return TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 app = FastAPI(title="Karya API")
 api = APIRouter(prefix="/api")
@@ -186,6 +198,11 @@ async def create_session(body: SessionIn, response: Response):
             "name": data.get("name", ""),
             "picture": data.get("picture", ""),
             "company_name": f"{(data.get('name') or 'My').split()[0]}'s Construction Co.",
+            "phone": "",
+            "address": "",
+            "role": "",
+            "default_client_phone": "",
+            "profile_complete": False,
             "created_at": now_iso(),
         }
         await db.users.insert_one({**user})
@@ -223,12 +240,31 @@ async def logout(request: Request, response: Response):
     response.delete_cookie("session_token", path="/", secure=True, samesite="none")
     return {"ok": True}
 
+
+class ProfileIn(BaseModel):
+    name: str
+    phone: str = ""
+    address: str = ""
+    company_name: str = ""
+    role: str = ""
+    default_client_phone: str = ""
+
+
+@api.put("/auth/profile")
+async def update_profile(body: ProfileIn, user: dict = Depends(get_current_user)):
+    patch = body.model_dump()
+    patch["profile_complete"] = bool(patch["name"].strip() and patch["phone"].strip())
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": patch})
+    updated = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return updated
+
 # ---------------------------------------------------------------- projects & workers
 
 class ProjectIn(BaseModel):
     name: str
     location: str = ""
     client: str = ""
+    client_phone: str = ""
     budget: float = 0
 
 class WorkerIn(BaseModel):
@@ -1105,6 +1141,112 @@ class ReportGenIn(BaseModel):
     notes_text: str = ""
     photo_ids: List[str] = []
     report_date: Optional[str] = None
+    whatsapp_send: bool = False
+    whatsapp_audience: Dict[str, bool] = {}  # {client: bool, subcontractors: bool, labour: bool}
+    whatsapp_extra_numbers: List[str] = []
+
+
+class WhatsappSendIn(BaseModel):
+    audience: Dict[str, bool] = {}
+    extra_numbers: List[str] = []
+
+
+def _normalize_phone(p: str) -> Optional[str]:
+    """Return E.164 phone with 'whatsapp:' prefix, or None if invalid."""
+    if not p:
+        return None
+    s = re.sub(r"[^\d+]", "", p.strip())
+    if not s:
+        return None
+    if not s.startswith("+"):
+        # Assume Indian number if 10 digits
+        if len(s) == 10:
+            s = "+91" + s
+        else:
+            s = "+" + s
+    return f"whatsapp:{s}"
+
+
+def _format_report_message(rec: dict) -> str:
+    c = rec.get("content") or {}
+    lines = [
+        f"*{c.get('title') or 'Daily Site Report'}*",
+        f"_{rec.get('project_name') or 'Site'} · {rec.get('report_date') or ''}_",
+        "",
+    ]
+    if c.get("summary"):
+        lines.append(c["summary"])
+        lines.append("")
+    if c.get("work_completed"):
+        lines.append("*Work completed:*")
+        lines += [f"• {x}" for x in c["work_completed"][:6]]
+        lines.append("")
+    if c.get("manpower"):
+        lines.append(f"*Manpower:* {c['manpower']}")
+    if c.get("issues_delays"):
+        lines.append("*Issues / delays:*")
+        lines += [f"• {x}" for x in c["issues_delays"][:4]]
+    if c.get("next_steps"):
+        lines.append("*Next steps:*")
+        lines += [f"• {x}" for x in c["next_steps"][:4]]
+    if rec.get("location"):
+        lines.append("")
+        lines.append(f"📍 {rec['location']}")
+    body = "\n".join(lines).strip()
+    return body[:1500]
+
+
+async def _resolve_report_recipients(
+    owner_id: str, project_id: Optional[str],
+    audience: Dict[str, bool], extra: List[str]
+) -> List[str]:
+    numbers: List[str] = []
+    if audience.get("client") and project_id:
+        proj = await db.projects.find_one({"id": project_id, "owner_id": owner_id}, {"_id": 0})
+        if proj and proj.get("client_phone"):
+            numbers.append(proj["client_phone"])
+    if audience.get("subcontractors"):
+        subs = await db.subcontractors.find(
+            {"owner_id": owner_id, **({"project_id": project_id} if project_id else {})},
+            {"_id": 0, "phone": 1}
+        ).to_list(200)
+        numbers += [s.get("phone", "") for s in subs if s.get("phone")]
+    if audience.get("labour"):
+        q = {"owner_id": owner_id}
+        if project_id:
+            q["project_id"] = project_id
+        workers = await db.workers.find(q, {"_id": 0, "phone": 1}).to_list(500)
+        numbers += [w.get("phone", "") for w in workers if w.get("phone")]
+    numbers += list(extra or [])
+    # normalize + de-dupe, drop invalid
+    seen, out = set(), []
+    for n in numbers:
+        norm = _normalize_phone(n)
+        if norm and norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    return out
+
+
+def _send_whatsapp_batch(numbers: List[str], body: str, media_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+    tw = _twilio_client()
+    if not tw:
+        return {"sent": 0, "failed": 0, "errors": ["Twilio not configured — set TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN"], "recipients": numbers}
+    sent, failed, errors = 0, 0, []
+    for n in numbers:
+        try:
+            kwargs = {"from_": TWILIO_WHATSAPP_FROM, "to": n, "body": body}
+            if media_urls:
+                kwargs["media_url"] = media_urls[:5]  # Twilio max 10 media items
+            tw.messages.create(**kwargs)
+            sent += 1
+        except TwilioRestException as e:
+            failed += 1
+            errors.append(f"{n}: {e.msg or str(e)}")
+        except Exception as e:
+            failed += 1
+            errors.append(f"{n}: {e}")
+    return {"sent": sent, "failed": failed, "errors": errors[:10], "recipients": numbers}
 
 REPORT_SYSTEM = """You write professional daily site reports for construction & maintenance companies in India.
 You receive field notes (often a rough voice-note transcript), site photos, a location and a date.
@@ -1148,11 +1290,38 @@ async def generate_report(body: ReportGenIn, user: dict = Depends(get_current_us
         "id": new_id(), "owner_id": uid, "project_id": body.project_id,
         "project_name": project["name"] if project else None,
         "location": body.location, "notes_text": body.notes_text,
-        "report_date": rdate, "photos": photos, "content": content, "created_at": now_iso(),
+        "report_date": rdate, "photos": photos, "content": content,
+        "whatsapp": {"sent": 0, "failed": 0, "recipients": []},
+        "created_at": now_iso(),
     }
     await db.daily_reports.insert_one({**doc})
     doc.pop("_id", None)
+    # Optional auto-send on generation
+    if body.whatsapp_send:
+        numbers = await _resolve_report_recipients(uid, body.project_id, body.whatsapp_audience or {}, body.whatsapp_extra_numbers or [])
+        media_urls = []
+        if BACKEND_PUBLIC_URL:
+            for p in photos[:3]:
+                # signed via ?auth= (token belongs to owner; images are private)
+                # NOTE: we can't send owner's session token — instead we omit media if unable to sign publicly.
+                pass  # keep media empty unless a public URL scheme is added
+        result = await asyncio.to_thread(_send_whatsapp_batch, numbers, _format_report_message(doc), media_urls or None)
+        await db.daily_reports.update_one({"id": doc["id"]}, {"$set": {"whatsapp": result}})
+        doc["whatsapp"] = result
     return doc
+
+@api.post("/reports/{report_id}/whatsapp")
+async def send_report_whatsapp(report_id: str, body: WhatsappSendIn, user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
+    rec = await db.daily_reports.find_one({"id": report_id, "owner_id": uid}, {"_id": 0})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Report not found")
+    numbers = await _resolve_report_recipients(uid, rec.get("project_id"), body.audience or {}, body.extra_numbers or [])
+    if not numbers:
+        raise HTTPException(status_code=400, detail="No valid recipient numbers resolved")
+    result = await asyncio.to_thread(_send_whatsapp_batch, numbers, _format_report_message(rec), None)
+    await db.daily_reports.update_one({"id": report_id}, {"$set": {"whatsapp": result}})
+    return result
 
 @api.get("/reports")
 async def list_reports(user: dict = Depends(get_current_user)):

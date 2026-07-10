@@ -1,0 +1,27 @@
+{
+  "summary": "Full validation of iteration 12: profile onboarding backend+frontend, project client_phone, WhatsApp code path (Twilio unconfigured), Daily Reports audience UI, top-nav Signed-in-as chip, login error banner + copy-diagnostics, AIAssistant voice buttons, and auth regression. 10/10 backend tests pass, all 9 frontend flows pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12.py",
+    "/app/test_reports/pytest/pytest_iteration12.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~1367 lines — still needs to be split into routers (auth, projects, workers, subcontractors, reports/whatsapp, insights) for maintainability. Reports/WhatsApp module is a natural first split (~230 lines).",
+    "AppLayout signed-in chip stays mounted with opacity 0 on non-dashboard pages instead of being unmounted (works but minor DOM noise).",
+    "/api/auth/profile does not validate phone shape (accepts any string). Consider light regex validation server-side so profile_complete truly implies a WhatsApp-reachable phone.",
+    "/api/reports/generate quietly ignores media in WhatsApp because it can't sign owner-scoped photo URLs (`pass` block, line ~1307). Either implement short-lived signed URLs or remove the dead code and drop media_urls arg."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12.py (new)",
+    "/app/test_reports/pytest/pytest_iteration12.xml (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_karya1 / localStorage karya_session_token — /app/memory/test_credentials.md",
+  "seed_data_creation": "Used mongosh to flip profile_complete=false → tested /dashboard → /onboarding redirect → submitted form → landed /dashboard. Reverted user to profile_complete:true, name:'QA Karya', phone:'+919999912345' after tests.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend: PUT /api/auth/profile sets profile_complete based on non-empty name AND phone; GET /me returns new fields. POST /api/projects persists client_phone in ProjectIn. POST /api/reports/generate with whatsapp_send=true and whatsapp_extra_numbers=['+91...'] returns doc.whatsapp={sent:0,failed:0,errors:['Twilio not configured — ...'],recipients:['whatsapp:+91...']}. 10-digit '9999912345' normalizes to 'whatsapp:+919999912345'. POST /api/reports/{id}/whatsapp with audience.client=true resolves project.client_phone. Empty audience+extras -> 400 'No valid recipient numbers resolved'. Frontend: Onboarding page + guards work (data-testids ob-name/ob-phone/ob-company/ob-role/ob-default-client/ob-address/ob-submit); signed-in-chip fades 0->1 within ~1.2s and back to 0 by ~6s on /dashboard only; auth-error-banner + copy-diagnostics-btn present when ?auth_error=... in URL; DailyReports has whatsapp-panel, whatsapp-toggle, audience-{client,subcontractors,labour}, audience-extra; report-detail modal has detail-audience-*, detail-extra-numbers, send-whatsapp-button; AIAssistant has voice-button and voice-record-button; Workforce New Project dialog has project-client-phone-input. Auth regression: /api/auth/session with bogus session_id -> 401 detail 'emergent_404:...'; Bearer works for /api/auth/me.",
+  "rca of the issue": "N/A — this was a feature-validation pass, no bugs found."
+}

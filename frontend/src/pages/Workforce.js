@@ -21,7 +21,7 @@ export default function Workforce() {
   const [open, setOpen] = useState(false);
   const [projOpen, setProjOpen] = useState(false);
   const [form, setForm] = useState({ name: "", role: "Labour", phone: "", rate: "", rate_type: "daily", project_id: "", subcontractor: "" });
-  const [proj, setProj] = useState({ name: "", location: "", client: "", budget: "" });
+  const [proj, setProj] = useState({ name: "", location: "", client: "", client_phone: "", budget: "" });
 
   const { data: workers, isLoading } = useQuery({ queryKey: ["workers"], queryFn: async () => (await api.get("/workers")).data });
   const { data: projects } = useQuery({ queryKey: ["projects"], queryFn: async () => (await api.get("/projects")).data });
@@ -34,7 +34,7 @@ export default function Workforce() {
   });
   const addProject = useMutation({
     mutationFn: async () => (await api.post("/projects", { ...proj, budget: parseFloat(proj.budget) || 0 })).data,
-    onSuccess: () => { toast.success("Project added"); qc.invalidateQueries({ queryKey: ["projects"] }); setProjOpen(false); setProj({ name: "", location: "", client: "", budget: "" }); },
+    onSuccess: () => { toast.success("Project added"); qc.invalidateQueries({ queryKey: ["projects"] }); setProjOpen(false); setProj({ name: "", location: "", client: "", client_phone: "", budget: "" }); },
   });
   const del = useMutation({
     mutationFn: async (id) => (await api.delete(`/workers/${id}`)).data,
@@ -74,7 +74,8 @@ export default function Workforce() {
                 <div className="space-y-3">
                   <input data-testid="project-name-input" className={inputCls} placeholder="Project name" value={proj.name} onChange={(e) => setProj({ ...proj, name: e.target.value })} />
                   <input className={inputCls} placeholder="Location" value={proj.location} onChange={(e) => setProj({ ...proj, location: e.target.value })} />
-                  <input className={inputCls} placeholder="Client" value={proj.client} onChange={(e) => setProj({ ...proj, client: e.target.value })} />
+                  <input className={inputCls} placeholder="Client name" value={proj.client} onChange={(e) => setProj({ ...proj, client: e.target.value })} />
+                  <input data-testid="project-client-phone-input" className={inputCls} placeholder="Client WhatsApp (+91…)" value={proj.client_phone} onChange={(e) => setProj({ ...proj, client_phone: e.target.value })} />
                   <input className={inputCls} placeholder="Budget (₹)" type="number" value={proj.budget} onChange={(e) => setProj({ ...proj, budget: e.target.value })} />
                 </div>
                 <DialogFooter>
