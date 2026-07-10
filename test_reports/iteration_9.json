@@ -1,0 +1,19 @@
+{
+  "summary": "Verified StrictMode duplicate-POST fix in AuthCallback. All 3 targeted scenarios pass: (1) invalid session_id fires exactly 1 POST /api/auth/session under StrictMode and redirects to /?auth_error=..., (2) valid session cookie renders Dashboard cleanly, (3) backend logs Emergent 404 response body on invalid session_id.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/frontend/src/pages/AuthCallback.js"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Module-level `inFlight` flag never resets on unmount — acceptable for one-shot callback but note it prevents any legitimate retry within the same tab session; if user reloads /dashboard#session_id=... in the same SPA session, second attempt would be a no-op (falls through to loading spinner forever). Not a real user flow (Emergent redirects to a fresh session_id each time), so low risk.",
+    "server.py line 195: db.user_sessions.insert_one is called even if a session for this token already exists — no upsert / dedupe. Could accumulate duplicate session rows on retries. Minor."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "session_token=test_session_karya1 (qa.karya@example.com) from /app/memory/test_credentials.md",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "AuthCallback duplicate-POST bug is fixed via module-scoped inFlight guard. Playwright confirms exactly 1 POST /api/auth/session under StrictMode for both success and error paths. Backend Emergent-response logging verified in /var/log/supervisor/backend.err.log.",
+  "rca of the issue": "React StrictMode double-mounted AuthCallback in dev, causing useEffect to run twice and POST the one-time Emergent session_id twice. Second call returned 401 (user_data_not_found), overwriting the first call's /dashboard redirect with a redirect to /. Fix: module-level `let inFlight = false;` guard outside the component, checked/set at effect start, survives StrictMode remount so only the first mount performs the exchange. Hard window.location.replace() on both success and failure paths avoids router timing issues."
+}

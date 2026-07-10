@@ -172,6 +172,7 @@ class SessionIn(BaseModel):
 async def create_session(body: SessionIn, response: Response):
     resp = http_requests.get(AUTH_SESSION_URL, headers={"X-Session-ID": body.session_id}, timeout=20)
     if resp.status_code != 200:
+        logging.error(f"[auth/session] Emergent auth returned {resp.status_code}: {resp.text[:500]} | session_id_len={len(body.session_id)} | url={AUTH_SESSION_URL}")
         raise HTTPException(status_code=401, detail="Invalid session_id")
     data = resp.json()
     user = await db.users.find_one({"email": data["email"]}, {"_id": 0})

@@ -1,12 +1,14 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect } from "react";
 import api from "@/lib/api";
 
-export default function AuthCallback() {
-  const processed = useRef(false);
+// Module-scoped guard: survives React StrictMode double-mount so we
+// never POST the one-time session_id to the backend more than once.
+let inFlight = false;
 
+export default function AuthCallback() {
   useEffect(() => {
-    if (processed.current) return;
-    processed.current = true;
+    if (inFlight) return;
+    inFlight = true;
 
     const hash = window.location.hash;
     const sessionId = new URLSearchParams(hash.replace("#", "")).get("session_id");
@@ -21,7 +23,10 @@ export default function AuthCallback() {
         // avoiding router timing issues between setUser + navigate.
         window.location.replace("/dashboard");
       } catch (e) {
-        window.location.replace("/");
+        // Surface the backend detail so we can see the real reason in devtools.
+        // eslint-disable-next-line no-console
+        console.error("[AuthCallback] session exchange failed:", e?.response?.status, e?.response?.data);
+        window.location.replace("/?auth_error=" + encodeURIComponent(e?.response?.data?.detail || "unknown"));
       }
     })();
   }, []);
