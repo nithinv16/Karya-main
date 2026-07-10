@@ -15,6 +15,7 @@ const features = [
 ];
 
 export default function Login() {
+  const authError = new URLSearchParams(window.location.search).get("auth_error");
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
       {/* Left: brand + form */}
@@ -43,6 +44,12 @@ export default function Login() {
             Continue with Google
           </button>
           <p className="text-xs text-[#71717A] mt-4">No setup. Sign in and start running your operations on live data.</p>
+          {authError && (
+            <div data-testid="auth-error-banner" className="mt-4 border border-red-500 bg-red-50 p-3 text-xs text-red-800 max-w-md break-all">
+              <strong className="block mb-1">Sign-in failed:</strong>
+              {authError}
+            </div>
+          )}
         </div>
 
         <p className="text-xs text-[#71717A]">Built for contractors, builders, MEP & civil firms across emerging markets.</p>
