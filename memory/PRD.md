@@ -13,7 +13,7 @@ Fetch the Karya-main repo into the environment and update .env / credentials (Go
   - `STRIPE_API_KEY=sk_test_emergent` (Emergent test key)
   - Twilio vars left blank (optional; WhatsApp features inactive until user provides them)
 - Created `/app/frontend/.env`:
-  - `REACT_APP_BACKEND_URL=https://ff93930f-f8e3-408d-bd7e-ac5d173ad9b5.preview.emergentagent.com`
+  - `REACT_APP_BACKEND_URL=https://voice-to-docs-6.preview.emergentagent.com`
 - Restarted supervisor: backend + frontend RUNNING, `/api/` returns 200, landing page renders.
 
 ## Auth
