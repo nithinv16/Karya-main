@@ -71,6 +71,15 @@ Karya-main repo (construction ops platform: workforce, payroll, subcontractors, 
 - `TWILIO_VERIFY_SERVICE_SID` (new) — create a Verify service at https://console.twilio.com → Verify → Services, paste the `VA...` SID here to enable phone OTP.
 - `TWILIO_WHATSAPP_FROM` — leave empty for sandbox (`whatsapp:+14155238886`) or set to your approved WhatsApp Business number.
 
+## Iteration 23 (2026-07) — Help Center + Multi-language platform
+1. **Help & Documentation** — new route `/help` (nav: "Help & Docs"). Sectioned, searchable articles across Getting Started · Workforce · Payroll · Reports · SOPs · Compliance · Telegram · WhatsApp · Insights · Org Memory · Subcontractors. Each article has a Translate button. Top-of-page "Ask a question" box → `POST /api/help/ask` (grounded on Karya capabilities, replies in the user's chosen language).
+2. **Multi-language i18n** (English, Hindi, Malayalam, Tamil, Telugu) —
+   - Pre-translated UI shell dictionaries at `/app/frontend/src/lib/locales/{en,hi,ml,ta,te}.json`.
+   - Provider + `useI18n()` at `/app/frontend/src/lib/i18n.js`, wired into `App.js` (`I18nBinder` reads `user.language` from AuthContext).
+   - AppLayout nav, mobile bottom bar, More sheet, Ask AI, Sign out — all translated.
+   - Profile page: new 5-tile language selector, instant switch + persists to `PUT /api/auth/profile`.
+3. **On-demand AI translation** — `POST /api/translate` (Emergent LLM Key), with SHA-256 cached translations in `db.translations`. Reusable `TranslateButton` component appears below Help articles and can be dropped onto any dynamic content (report bodies, SOPs, feed).
+
 ## Backlog / Next
 - P1: Expenses page in web UI (receipts currently visible via Org Memory; db.expenses has structured data)
 - P1: Let user pick project when generating /report from Telegram (currently most-recent project)
