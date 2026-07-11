@@ -2761,8 +2761,16 @@ async def list_expenses(user: dict = Depends(get_current_user), q: str = "", cat
                 {"vendor": {"$regex": needle, "$options": "i"}},
                 {"summary": {"$regex": needle, "$options": "i"}},
             ]
-    limit = max(1, min(int(limit or 500), 2000))
-    offset = max(0, int(offset or 0))
+    try:
+        limit_val = int(limit)
+    except (TypeError, ValueError):
+        limit_val = 500
+    try:
+        offset_val = int(offset)
+    except (TypeError, ValueError):
+        offset_val = 0
+    limit = max(1, min(limit_val, 2000))
+    offset = max(0, offset_val)
     total_count = await db.expenses.count_documents(query)
     docs = await db.expenses.find(query, {"_id": 0}).sort("date", -1).skip(offset).limit(limit).to_list(limit)
     ctx = country_ctx(user)
@@ -3290,9 +3298,15 @@ async def _build_payroll_reminder(user: dict) -> Optional[str]:
 
 
 async def _send_ping(user: dict, ping_type: str, message: str, dedup_key: str):
-    """Send `message` via Telegram and log to db.ping_log. Also localises to user's language."""
+    """Send `message` via Telegram and log to db.ping_log. Also localises to user's language.
+
+    Idempotent: if a ping with the same (user_id, type, dedup_key) was already logged
+    we skip the send entirely so retries/direct callers can't produce duplicates.
+    """
     chat_id = user.get("telegram_chat_id")
     if not chat_id:
+        return
+    if await _ping_already_sent(user["user_id"], ping_type, dedup_key):
         return
     try:
         # Propagate user's language so tg_send auto-translates long messages.

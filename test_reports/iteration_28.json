@@ -1,0 +1,23 @@
+{
+  "summary": "Re-verified iter27 fixes. Both bugs fully resolved. Focused refix test file (6 tests) + full iter27 suite (17 tests) = 23/23 passing.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration27_refixes.py",
+    "/app/test_reports/pytest/iteration28_refixes.xml",
+    "/app/test_reports/pytest/iteration28_full.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix 1 verified: list_expenses now uses try/except int() parse then max(1, min(limit_val, 2000)). limit=0→1, limit=99999→2000, limit=-5→1, limit=abc→422 (FastAPI type validation).",
+    "Fix 2 verified: _send_ping now calls `if await _ping_already_sent(...): return` before tg_send. Second call with same (user_id, type, dedup_key) is a silent no-op; two calls with different dedup_keys still send both."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration27_refixes.py (new)"],
+  "success_rate": {"backend": "100% (23/23)", "frontend": "N/A (backend only)"},
+  "test_credentials": "Bearer test_session_karya1 (user test-user-karya1, DB karya_db_v2). Unchanged from iter27.",
+  "seed_data_creation": "None persistent. Refix tests write+cleanup TEST_REFIX_DEDUP_* rows in db.ping_log (field name is `day`, not `day_key`).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both iter27 bugs are fixed. Note: db.ping_log uses field `day` (not `day_key`) as the dedup key column — first version of the refix test cleaned by `day_key` and failed silently because leftover rows collided. Motor is bound to the pytest event loop, so use `asyncio.get_event_loop().run_until_complete(...)` — NOT `asyncio.run(...)` — for direct helper calls in tests.",
+  "rca of the issue": "Not applicable — both iter27 bugs already fixed by main agent; this iteration is verification-only."
+}
