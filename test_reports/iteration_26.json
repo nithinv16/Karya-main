@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 26 (Cost Trends & Budget vs Actual) fully validated. Backend: 14/14 new pytest cases pass covering auth, response shape, period selectors (week/month/quarter/year + invalid fallback), project filter, unassigned bucket, project_id on expenses, budget vs actual math and warn/over status transitions. Frontend: /expenses page mounts CostTrendsPanel with rollup KPIs, period+range toggles, project filter, budget-vs-actual list; expense form has expense-project select populated with Site A/Site B; /workforce shows view-costs-<id> buttons that open a dialog with per-project cost trends (title 'Site A - Downtown — Cost trends'). No blocking issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/telegram/link/code", "issue": "Returns 503 in preview env — EXPECTED because TELEGRAM_AUTO_REGISTER_WEBHOOK=false (documented in review request as intentional). Not a regression from iteration 26."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration26_cost_trends.py",
+    "/app/test_reports/pytest/iteration26_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 3106 lines — approaching the 700-line-per-module recommendation limit. Consider splitting into routers (expenses.py, cost_trends.py, projects.py, workforce.py, telegram.py) for maintainability.",
+    "In cost_trends() there is duplication: `expenses`, `txns`, `sub_txns` are queried twice (once for buckets, once for all-time per-project). Since project row math ignores the pid_filter (all-time actual regardless of filter), the two queries could be consolidated when pid_filter is empty.",
+    "_bucket_key returns tuple[str, str] but the return type hint uses PEP 585 lowercase generic — works on Python 3.11 (current runtime is 3.11.15) but pin type-checker to same version.",
+    "cost-trends endpoint has no cap on lookback — a user with years of data will return N buckets unbounded. Consider clamping to last 60 buckets or accept `limit` param.",
+    "Percent math uses rounded actual/budget * 100 — for a project sitting exactly at 80.0% due to rounding it will flip warn/ok around the boundary; consider comparing pre-round percent for status classification."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration26_cost_trends.py (new)"
+  ],
+  "success_rate": {"backend": "100% (14/14 new tests; 21/22 iter25 regression — the 1 fail is expected telegram 503)", "frontend": "100% (all critical flows verified)"},
+  "test_credentials": "Bearer test_session_karya1 (user test-user-karya1, DB karya_db_v2). Seed data: 2 projects (Site A budget 500000, Site B budget 300000), 4 expenses, labour+sub transactions across Oct/Nov/Dec 2025.",
+  "seed_data_creation": "No permanent seed changes. Test suite creates+deletes: a temporary TEST_tiny_budget project (budget 1000) + 2 expenses to exercise warn (85%) then over (>100%) transitions, then cleans up. Also an unassigned-expense test creates+deletes a 777 expense to verify overall.unassigned math.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 26 introduces GET /api/cost-trends (auth-required, returns period/project_id/buckets/projects/overall/currency/has_data) and adds Optional[project_id] to ExpenseIn/create_expense. Frontend CostTrendsPanel component reused on Expenses page (multi-project) and Workforce dialogs (project-locked via view-costs-<id> button). Data-testids in use: cost-trends, cost-trends-project-<id>, cost-rollup, cost-trends-period, period-{week,month,quarter,year}, cost-trends-range, range-{all,3,6,12}, cost-trends-project-filter, budget-vs-actual-list, budget-row-<pid>, budget-row-unassigned, single-project-breakdown, cost-trends-empty, expense-project, view-costs-<pid>. Telegram webhook is intentionally disabled in preview — skip webhook-registration tests.",
+  "rca of the issue": "N/A — no bugs found in iteration 26 scope. The single pre-existing telegram 503 failure is not an iteration-26 regression; it is documented in the review request as expected behavior (TELEGRAM_AUTO_REGISTER_WEBHOOK=false)."
+}

@@ -9,7 +9,7 @@ import re
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://63eb8f53-e1d3-4702-9386-8e98d5fd8498.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://telegram-helper-bot.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 TOKEN = "test_session_karya1"
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}

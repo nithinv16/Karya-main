@@ -3,10 +3,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api, { API, getToken } from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Trash, UsersThree, ShieldCheck, Check, Buildings, PencilSimple, MapPin, User, FileArrowDown } from "@phosphor-icons/react";
+import { Plus, Trash, UsersThree, ShieldCheck, Check, Buildings, PencilSimple, MapPin, User, FileArrowDown, ChartLine } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { formatMoney, getCountry } from "@/lib/country";
+import CostTrendsPanel from "@/components/CostTrendsPanel";
 
 const ONBOARDING = [
   { key: "id_collected", label: "ID / Aadhaar collected" },
@@ -73,6 +74,7 @@ export default function Workforce() {
 
   const [obWorker, setObWorker] = useState(null);
   const [obState, setObState] = useState({});
+  const [costsProject, setCostsProject] = useState(null);
   const openOnboarding = (w) => {
     setObWorker(w);
     setObState({ ...ONBOARDING.reduce((a, i) => ({ ...a, [i.key]: false }), {}), ...(w.onboarding || {}) });
@@ -190,11 +192,34 @@ export default function Workforce() {
                   <Badge tone="accent">{workersInProject(p.id)} worker{workersInProject(p.id) === 1 ? "" : "s"}</Badge>
                   {p.budget > 0 && <span className="text-xs font-mono text-[#71717A]">Budget: {fmt(p.budget)}</span>}
                 </div>
+                <button
+                  data-testid={`view-costs-${p.id}`}
+                  onClick={() => setCostsProject(p)}
+                  className="mt-2 flex items-center justify-center gap-1.5 border-2 border-[#E4E4E7] hover:border-[#EA580C] hover:text-[#EA580C] px-3 py-1.5 text-xs font-semibold text-[#3f3f46] transition-colors duration-200"
+                >
+                  <ChartLine size={13} weight="bold" /> View cost trends
+                </button>
               </div>
             ))}
           </div>
         </div>
       )}
+
+      {/* Per-project cost trends dialog */}
+      <Dialog open={!!costsProject} onOpenChange={(v) => !v && setCostsProject(null)}>
+        <DialogContent className="rounded-none border-2 border-[#09090B] max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display flex items-center gap-2">
+              <ChartLine size={18} weight="duotone" className="text-[#EA580C]" />
+              {costsProject?.name} — Cost trends
+            </DialogTitle>
+            <DialogDescription>
+              Month-over-month cost breakdown for this project, with budget overlay when a budget is set.
+            </DialogDescription>
+          </DialogHeader>
+          {costsProject && <CostTrendsPanel projectId={costsProject.id} dense />}
+        </DialogContent>
+      </Dialog>
 
       {workers?.length === 0 ? (
         <div className="border border-[#E4E4E7] p-12 text-center">

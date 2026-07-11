@@ -17,7 +17,7 @@ import pytest
 import requests
 from datetime import datetime, timedelta, timezone
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://voice-to-docs-6.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://telegram-helper-bot.preview.emergentagent.com").rstrip("/")
 TOKEN = "test_session_karya1"
 H = {"Authorization": f"Bearer {TOKEN}"}
 JH = {**H, "Content-Type": "application/json"}

@@ -9,7 +9,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://63eb8f53-e1d3-4702-9386-8e98d5fd8498.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://telegram-helper-bot.preview.emergentagent.com").rstrip("/")
 TOKEN = "test_session_karya1"
 SECRET = "karya-tg-hook-7f3a9c2e"
 USER_ID = "test-user-karya1"

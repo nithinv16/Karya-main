@@ -14,7 +14,7 @@ Karya-main repo (construction ops platform: workforce, payroll, subcontractors, 
 - Replace all Emergent keys with new one + NEW database
 
 ## Environment (2026-06, fork)
-- backend/.env recreated: MONGO_URL local, DB_NAME=karya_db_v2 (NEW db), EMERGENT_LLM_KEY=sk-emergent-192096dD6E97559Fa0, TELEGRAM_BOT_TOKEN + TELEGRAM_WEBHOOK_SECRET=karya-tg-hook-7f3a9c2e, BACKEND_PUBLIC_URL/CORS = https://63eb8f53-e1d3-4702-9386-8e98d5fd8498.preview.emergentagent.com
+- backend/.env recreated: MONGO_URL local, DB_NAME=karya_db_v2 (NEW db), EMERGENT_LLM_KEY=sk-emergent-192096dD6E97559Fa0, TELEGRAM_BOT_TOKEN + TELEGRAM_WEBHOOK_SECRET=karya-tg-hook-7f3a9c2e, BACKEND_PUBLIC_URL/CORS = https://telegram-helper-bot.preview.emergentagent.com
 - frontend/.env recreated with matching REACT_APP_BACKEND_URL
 
 ## What's Implemented (this session)

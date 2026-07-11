@@ -1337,7 +1337,9 @@ async def _apply_pending_action(chat_id: int, action: str, user: dict, pending: 
             "id": new_id(), "owner_id": uid, "vendor": parsed.get("vendor") or "", "date": parsed.get("date") or today_str(),
             "amount": amount, "currency": parsed.get("currency") or country_ctx(user)["currency_code"],
             "category": parsed.get("category") or "other", "items": parsed.get("items") or [],
-            "summary": parsed.get("summary") or "", "attachment": att, "source": "telegram", "created_at": now_iso(),
+            "summary": parsed.get("summary") or "", "attachment": att, "source": "telegram",
+            "project_id": None,
+            "created_at": now_iso(),
         }
         await db.expenses.insert_one({**exp})
         await db.knowledge.insert_one({
@@ -2737,6 +2739,7 @@ class ExpenseIn(BaseModel):
     category: str = "other"
     summary: str = ""
     items: List[Dict[str, Any]] = []
+    project_id: Optional[str] = None
 
 
 @api.get("/expenses")
@@ -2770,6 +2773,7 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(get_current_user)
         "amount": float(body.amount or 0), "currency": (body.currency or ctx["currency_code"]).strip(),
         "category": body.category or "other", "items": body.items or [],
         "summary": body.summary.strip(), "attachment": None, "source": "manual",
+        "project_id": body.project_id or None,
         "created_at": now_iso(),
     }
     await db.expenses.insert_one({**exp})
@@ -2783,6 +2787,160 @@ async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Expense not found")
     return {"deleted": True}
+
+
+# ---------------------------------------------------------------- cost trends
+# Aggregates cost across three streams (expenses, labour wages, subcontractor
+# payments) into a single time-bucketed view + budget vs actual per project.
+
+_LABOUR_COST_TYPES = ["wage", "bonus"]  # accrued labour cost
+_SUB_COST_TYPES = ["payment", "advance", "extra_work"]  # sub cash-out to project
+
+
+def _bucket_key(date_str: str, period: str) -> Optional[tuple[str, str]]:
+    """Returns (sort_key, label) for a YYYY-MM-DD date. None if unparseable."""
+    if not date_str or len(date_str) < 7:
+        return None
+    try:
+        dt = datetime.fromisoformat(date_str[:10])
+    except Exception:
+        return None
+    if period == "week":
+        iso_year, iso_week, _ = dt.isocalendar()
+        return f"{iso_year}-W{iso_week:02d}", f"W{iso_week} {iso_year}"
+    if period == "quarter":
+        q = (dt.month - 1) // 3 + 1
+        return f"{dt.year}-Q{q}", f"Q{q} {dt.year}"
+    if period == "year":
+        return f"{dt.year}", f"{dt.year}"
+    # default: month
+    month_label = dt.strftime("%b %Y")
+    return f"{dt.year}-{dt.month:02d}", month_label
+
+
+@api.get("/cost-trends")
+async def cost_trends(
+    period: str = "month",
+    project_id: str = "",
+    user: dict = Depends(get_current_user),
+):
+    period = period if period in ("week", "month", "quarter", "year") else "month"
+    uid = user["user_id"]
+    ctx = country_ctx(user)
+
+    # Load lookup collections once.
+    workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(5000)
+    worker_project = {w["id"]: w.get("project_id") for w in workers}
+    subs = await db.subcontractors.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
+    sub_project = {s["id"]: s.get("project_id") for s in subs}
+    projects = await db.projects.find({"owner_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+    pid_filter = project_id or None
+
+    # ---- Stream 1: expenses (already have project_id + date + amount).
+    exp_query: Dict[str, Any] = {"owner_id": uid}
+    if pid_filter:
+        exp_query["project_id"] = pid_filter
+    expenses = await db.expenses.find(exp_query, {"_id": 0}).to_list(5000)
+
+    # ---- Stream 2: labour cost = worker transactions of type wage/bonus.
+    txn_query: Dict[str, Any] = {"owner_id": uid, "type": {"$in": _LABOUR_COST_TYPES}}
+    txns = await db.transactions.find(txn_query, {"_id": 0}).to_list(20000)
+    if pid_filter:
+        txns = [t for t in txns if worker_project.get(t.get("worker_id")) == pid_filter]
+
+    # ---- Stream 3: subcontractor cost = sub_transactions of cost types.
+    sub_query: Dict[str, Any] = {"owner_id": uid, "type": {"$in": _SUB_COST_TYPES}}
+    sub_txns = await db.sub_transactions.find(sub_query, {"_id": 0}).to_list(20000)
+    if pid_filter:
+        sub_txns = [t for t in sub_txns if sub_project.get(t.get("sub_id")) == pid_filter]
+
+    # ---- Bucket every stream by period.
+    buckets: Dict[str, Dict[str, Any]] = {}
+
+    def _add(bkt: Optional[tuple[str, str]], field: str, amt: float):
+        if not bkt:
+            return
+        key, label = bkt
+        b = buckets.setdefault(key, {"key": key, "label": label, "expenses": 0.0, "labour": 0.0, "subs": 0.0})
+        b[field] += float(amt or 0)
+
+    for e in expenses:
+        _add(_bucket_key(e.get("date") or "", period), "expenses", e.get("amount") or 0)
+    for t in txns:
+        _add(_bucket_key(t.get("date") or "", period), "labour", t.get("amount") or 0)
+    for t in sub_txns:
+        _add(_bucket_key(t.get("date") or "", period), "subs", t.get("amount") or 0)
+
+    ordered = sorted(buckets.values(), key=lambda b: b["key"])
+    for b in ordered:
+        b["expenses"] = round(b["expenses"], 2)
+        b["labour"] = round(b["labour"], 2)
+        b["subs"] = round(b["subs"], 2)
+        b["total"] = round(b["expenses"] + b["labour"] + b["subs"], 2)
+
+    # ---- Budget vs Actual per project (independent of period filter).
+    # Actual = all-time cost across the three streams for that project.
+    all_expenses = await db.expenses.find({"owner_id": uid}, {"_id": 0}).to_list(5000)
+    all_txns_labour = await db.transactions.find({"owner_id": uid, "type": {"$in": _LABOUR_COST_TYPES}}, {"_id": 0}).to_list(20000)
+    all_sub_txns = await db.sub_transactions.find({"owner_id": uid, "type": {"$in": _SUB_COST_TYPES}}, {"_id": 0}).to_list(20000)
+
+    per_project: Dict[str, Dict[str, float]] = {}
+    for p in projects:
+        per_project[p["id"]] = {"expenses": 0.0, "labour": 0.0, "subs": 0.0}
+    unassigned = {"expenses": 0.0, "labour": 0.0, "subs": 0.0}
+
+    def _accum(pid: Optional[str], field: str, amt: float):
+        if pid and pid in per_project:
+            per_project[pid][field] += float(amt or 0)
+        else:
+            unassigned[field] += float(amt or 0)
+
+    for e in all_expenses:
+        _accum(e.get("project_id"), "expenses", e.get("amount") or 0)
+    for t in all_txns_labour:
+        _accum(worker_project.get(t.get("worker_id")), "labour", t.get("amount") or 0)
+    for t in all_sub_txns:
+        _accum(sub_project.get(t.get("sub_id")), "subs", t.get("amount") or 0)
+
+    project_rows = []
+    total_budget = 0.0
+    total_actual = 0.0
+    for p in projects:
+        pid = p["id"]
+        parts = per_project[pid]
+        actual = round(parts["expenses"] + parts["labour"] + parts["subs"], 2)
+        budget = float(p.get("budget") or 0)
+        pct = round((actual / budget) * 100, 1) if budget > 0 else 0
+        remaining = round(budget - actual, 2) if budget > 0 else 0
+        status = "no_budget" if budget <= 0 else ("over" if pct > 100 else ("warn" if pct >= 80 else "ok"))
+        project_rows.append({
+            "id": pid, "name": p.get("name") or "Untitled",
+            "budget": round(budget, 2), "actual": actual, "remaining": remaining, "percent": pct,
+            "expenses": round(parts["expenses"], 2), "labour": round(parts["labour"], 2), "subs": round(parts["subs"], 2),
+            "status": status,
+        })
+        total_budget += budget
+        total_actual += actual
+
+    unassigned_total = round(unassigned["expenses"] + unassigned["labour"] + unassigned["subs"], 2)
+
+    overall = {
+        "budget": round(total_budget, 2),
+        "actual": round(total_actual, 2),
+        "unassigned": unassigned_total,
+        "percent": round((total_actual / total_budget) * 100, 1) if total_budget > 0 else 0,
+    }
+
+    return {
+        "period": period,
+        "project_id": pid_filter,
+        "buckets": ordered,
+        "projects": project_rows,
+        "overall": overall,
+        "currency": ctx["currency_code"],
+        "has_data": len(ordered) > 0 or total_actual > 0,
+    }
 
 
 # ---------------------------------------------------------------- app wiring

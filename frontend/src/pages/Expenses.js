@@ -4,8 +4,9 @@ import api from "@/lib/api";
 import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { useAuth } from "@/context/AuthContext";
 import { formatMoney } from "@/lib/country";
-import { Receipt, MagnifyingGlass, Plus, Trash, Calendar, Storefront, Tag, Sparkle, PaperPlaneTilt } from "@phosphor-icons/react";
+import { Receipt, MagnifyingGlass, Plus, Trash, Calendar, Storefront, Tag, Sparkle, PaperPlaneTilt, Buildings } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import CostTrendsPanel from "@/components/CostTrendsPanel";
 
 const CATS = ["cement", "steel", "aggregate", "tools", "fuel", "transport", "labour_petty", "food", "office", "other"];
 
@@ -20,7 +21,12 @@ export default function Expenses() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     vendor: "", date: new Date().toISOString().slice(0, 10),
-    amount: "", category: "other", summary: "",
+    amount: "", category: "other", summary: "", project_id: "",
+  });
+
+  const { data: projects } = useQuery({
+    queryKey: ["projects"],
+    queryFn: async () => (await api.get("/projects")).data,
   });
 
   const { data, isLoading } = useQuery({
@@ -29,19 +35,24 @@ export default function Expenses() {
   });
 
   const create = useMutation({
-    mutationFn: async () => (await api.post("/expenses", { ...form, amount: parseFloat(form.amount || "0") })).data,
+    mutationFn: async () => (await api.post("/expenses", { ...form, amount: parseFloat(form.amount || "0"), project_id: form.project_id || null })).data,
     onSuccess: () => {
       toast.success("Expense added");
-      setForm({ vendor: "", date: new Date().toISOString().slice(0, 10), amount: "", category: "other", summary: "" });
+      setForm({ vendor: "", date: new Date().toISOString().slice(0, 10), amount: "", category: "other", summary: "", project_id: "" });
       setShowForm(false);
       qc.invalidateQueries({ queryKey: ["expenses"] });
+      qc.invalidateQueries({ queryKey: ["cost-trends"] });
     },
     onError: () => toast.error("Couldn't add expense"),
   });
 
   const del = useMutation({
     mutationFn: async (id) => (await api.delete(`/expenses/${id}`)).data,
-    onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["expenses"] }); },
+    onSuccess: () => {
+      toast.success("Deleted");
+      qc.invalidateQueries({ queryKey: ["expenses"] });
+      qc.invalidateQueries({ queryKey: ["cost-trends"] });
+    },
   });
 
   const items = data?.items || [];
@@ -76,6 +87,17 @@ export default function Expenses() {
               {CATS.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+          {projects && projects.length > 0 && (
+            <select
+              data-testid="expense-project"
+              className={inputCls + " mb-3"}
+              value={form.project_id}
+              onChange={(e) => setForm({ ...form, project_id: e.target.value })}
+            >
+              <option value="">— Attach to project (optional) —</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          )}
           <textarea data-testid="expense-summary" className={inputCls + " min-h-16"} placeholder="What was this for? (optional)" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} />
           <div className="mt-3 flex items-center gap-3">
             <button
@@ -90,6 +112,11 @@ export default function Expenses() {
           </div>
         </div>
       )}
+
+      {/* Cost trends & budget vs actual */}
+      <div className="mb-6">
+        <CostTrendsPanel />
+      </div>
 
       {/* Rollup */}
       <div className="grid sm:grid-cols-3 gap-px bg-[#E4E4E7] border border-[#E4E4E7] mb-6" data-testid="expense-rollup">
@@ -171,6 +198,9 @@ export default function Expenses() {
                 <div className="flex items-center gap-3 mt-1.5 text-xs text-[#71717A]">
                   <span className="flex items-center gap-1"><Calendar size={12} /> {it.date || "—"}</span>
                   {(it.items || []).length > 0 && <span className="flex items-center gap-1"><Tag size={12} /> {it.items.length} item{it.items.length === 1 ? "" : "s"}</span>}
+                  {it.project_id && (
+                    <span className="flex items-center gap-1"><Buildings size={12} /> {projects?.find((p) => p.id === it.project_id)?.name || "Project"}</span>
+                  )}
                 </div>
               </div>
               <div className="text-right shrink-0">

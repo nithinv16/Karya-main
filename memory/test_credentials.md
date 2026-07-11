@@ -14,7 +14,7 @@ Set `localStorage.karya_session_token = "test_session_karya1"` on the frontend o
 ### API testing
 ```
 curl -H "Authorization: Bearer test_session_karya1" \
-  https://63eb8f53-e1d3-4702-9386-8e98d5fd8498.preview.emergentagent.com/api/auth/me
+  https://telegram-helper-bot.preview.emergentagent.com/api/auth/me
 ```
 
 ## Telegram
