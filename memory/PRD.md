@@ -113,6 +113,21 @@ Testing (iteration_26.json): 14/14 new backend tests pass, all frontend flows ve
 
 
 ## Backlog / Next
+
+## Iteration 27–28 (2026-07) — Proactive Telegram pings, TG localization, server-side Expense search
+1. **Proactive Telegram pings** with per-user settings (`GET/PUT /api/telegram/notifications`):
+   - Types: `morning_briefing` (default 08:00 local), `compliance_alerts` (D-3/D-1/D-0 fired around 09:00), `payroll_reminder` (Mon+Fri 09:00, weekday-configurable).
+   - Storage: `user.notifications = { timezone, morning_briefing, compliance_alerts, payroll_reminder }`. Defaults merged on read, timezone defaults from country (IN→Asia/Kolkata, AE→Asia/Dubai).
+   - Dedupe: unique index on `db.ping_log(user_id, type, day)`; `_send_ping` also checks `_ping_already_sent` before hitting Telegram (idempotent).
+   - Scheduler: in-process `_ping_scheduler_loop()` launched via `asyncio.create_task` on startup, wakes every 5 minutes, iterates users with `telegram_chat_id`, uses ZoneInfo for local time + a 6-minute window match.
+   - Messages built by `_build_morning_briefing`, `_build_compliance_pings`, `_build_payroll_reminder` (all use HTML-formatted Telegram text, currency-aware via `money_str`).
+2. **Telegram replies localized to user's language** — `tg_send` now translates outgoing text when `_TG_USER_LANG` context is non-`en` AND `len(text) >= 40`. Short confirmations ("OK", "✅ Recorded", command echoes) stay English. Both webhook handlers (`callback_query` and `message`) set `_TG_USER_LANG` right after resolving the linked user, so translation flows through all downstream sends including pings.
+3. **Server-side full-text search on Expenses** — `GET /api/expenses?q=` now uses MongoDB `$regex` (case-insensitive) on `vendor + summary` with `re.escape` so `.`, `*`, etc. are literal. Adds `limit` (default 500, clamped [1, 2000]) and `offset` params + `count` field in response. `limit=0` correctly clamps to 1 (was returning 500 by mistake — fixed in iter28).
+4. **New frontend component** `TelegramNotifications` (`/app/frontend/src/components/TelegramNotifications.js`) mounted below TelegramConnect on Profile — timezone select, three toggle rows with inline time pickers and weekday buttons. Every change fires PUT and shows a toast.
+
+Testing: `iteration_28.json` — 23/23 tests pass (17 iter27 suite + 6 focused refix). Both prior iter27 bugs (limit=0 clamp; _send_ping idempotency) fully resolved.
+
+
 - P1: Downloadable PDF Help Center for offline distribution to site supervisors.
 - P1: Expose Karya's grounded Help AI inside `/help` on the Telegram bot (answers in user's language, /start overview).
 - P2: Proactive Telegram pings (compliance deadlines, payroll dues, morning briefings).
