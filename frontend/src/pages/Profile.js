@@ -2,8 +2,9 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/api";
 import { toast } from "sonner";
-import { CheckCircle, WarningCircle, FloppyDisk, PencilSimple } from "@phosphor-icons/react";
+import { CheckCircle, WarningCircle, FloppyDisk, PencilSimple, Translate } from "@phosphor-icons/react";
 import { COUNTRIES } from "@/lib/country";
+import { useI18n, LANGUAGES } from "@/lib/i18n";
 import TelegramConnect from "@/components/TelegramConnect";
 import PhoneVerify from "@/components/PhoneVerify";
 
@@ -17,6 +18,7 @@ const hintCls = "text-[11px] text-[#71717A] mt-1";
 
 export default function Profile() {
   const { user, setUser } = useAuth();
+  const { t, setLang } = useI18n();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     name: "", phone: "", company_name: "", address: "", role: "", default_client_phone: "",
@@ -50,12 +52,38 @@ export default function Profile() {
     try {
       const res = await api.put("/auth/profile", form);
       setUser(res.data);
+      // Reflect language switch immediately in the UI shell
+      setLang(res.data.language || "en");
       toast.success("Profile updated");
       setEditing(false);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Couldn't save profile");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Instant switch (no need to click Save) — persists in background so UI feels alive.
+  const pickLanguage = async (code) => {
+    setForm((f) => ({ ...f, language: code }));
+    setLang(code);
+    if (!user?.name) return; // no persisted profile yet — local switch only
+    try {
+      const payload = {
+        name: user.name || "",
+        phone: user.phone || "",
+        company_name: user.company_name || "",
+        address: user.address || "",
+        role: user.role || "",
+        default_client_phone: user.default_client_phone || "",
+        country: user.country || "IN",
+        language: code,
+        ramadan_mode: !!user.ramadan_mode,
+      };
+      const res = await api.put("/auth/profile", payload);
+      setUser(res.data);
+    } catch {
+      // silent — local shell already updated
     }
   };
 
@@ -180,6 +208,29 @@ export default function Profile() {
               ))}
             </div>
             <p className={hintCls}>Switching country changes your currency, compliance categories and regulation feed sources.</p>
+          </div>
+
+          <div className="sm:col-span-2 pt-2">
+            <label className={labelCls}>
+              <span className="inline-flex items-center gap-1.5"><Translate size={13} weight="bold" /> {t("profile.language")}</span>
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-1" data-testid="profile-language-selector">
+              {LANGUAGES.map((l) => (
+                <button
+                  key={l.code}
+                  type="button"
+                  data-testid={`profile-language-${l.code}`}
+                  onClick={() => pickLanguage(l.code)}
+                  className={`flex flex-col items-start px-3 py-2.5 border-2 transition-colors duration-200 text-left ${
+                    form.language === l.code ? "border-[#EA580C] bg-[#FFF7ED]" : "border-[#E4E4E7] bg-white hover:border-[#09090B]"
+                  }`}
+                >
+                  <span className="font-display font-bold text-sm leading-tight">{l.native}</span>
+                  <span className="text-[11px] text-[#71717A]">{l.label}</span>
+                </button>
+              ))}
+            </div>
+            <p className={hintCls}>{t("profile.languageHelp")}</p>
           </div>
 
           {form.country === "AE" && (

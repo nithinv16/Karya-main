@@ -45,8 +45,7 @@ export function I18nProvider({ children, userLang }) {
       setLangState(userLang);
       try { localStorage.setItem(STORAGE_KEY, userLang); } catch { /* ignore */ }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userLang]);
+  }, [userLang, lang]);
 
   const setLang = useCallback((code) => {
     if (!isSupported(code)) return;

@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 23 backend testing: /api/translate + /api/help/ask + regressions. All 18 pytest tests pass. Translation guardrails (no answering questions, no English leakage) confirmed. Cache path (cached:true on repeat) works. All four supported languages (hi/ml/ta/te) return correct script ranges. Help assistant grounds answers in Karya capabilities (Profile, Connect Telegram, 6-character code) and honors user language setting. Regressions (telegram/status, dashboard/stats, insights has_data, phone verify verify_available, profile language mutation) all green.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/auth/profile", "issue": "ProfileIn model requires 'name' — a partial update with only {language:'ml'} returns 422. Frontend must send full profile fields on language change. Consider making name optional or add a dedicated PATCH /api/auth/profile/language endpoint."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration23_translate_help.py",
+    "/app/test_reports/pytest/iteration_23.xml"
+  ],
+  "action_items": [
+    "Verify frontend Profile page's language selector sends the FULL profile payload (name, phone, etc.) when calling PUT /api/auth/profile — otherwise language switching will silently fail with 422.",
+    "Optional: expose a lightweight PATCH endpoint for language-only updates so the Profile 5-tile language selector doesn't need to reconstruct the full ProfileIn body."
+  ],
+  "critical_code_review_comments": [
+    "/api/translate correctly short-circuits for target_lang='en' and validates unsupported langs (400). Cache using SHA-256(lang:text) as _id is clean and dedupes across users.",
+    "/api/help/ask has no explicit output-length cap; relies on the model to follow '3–8 short sentences'. Fine for now.",
+    "ProfileIn requires 'name' — this is a UX foot-gun for partial updates from the language switcher. See minor issue above."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration23_translate_help.py"],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "not tested (backend-only run)"},
+  "test_credentials": "Bearer test_session_karya1 (user_id=test-user-karya1) — from /app/memory/test_credentials.md",
+  "seed_data_creation": "Cache entry inserted into db.translations for a unique probe string (test 5) and various translations for hi/ml/ta/te 'Daily Reports'. User language reset to 'en' at teardown (verified via /api/auth/me).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test file test_iteration23_translate_help.py uses a _put_profile() helper that fetches /auth/me and sends the full ProfileIn payload — reuse this pattern for language-related tests. Note: LLM latency 2-8s per call, tests use 60s timeout. User language field is reset to 'en' in module-scope fixture teardown."
+}

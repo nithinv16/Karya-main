@@ -2614,19 +2614,28 @@ async def translate(body: TranslateIn, user: dict = Depends(get_current_user)):
         return {"translated": cached["translated"], "cached": True}
     target_name = _LANG_NAMES[lang]
     system = (
-        f"You are a professional translator into {target_name}. Translate the user's text "
-        f"into {target_name} preserving meaning, tone, formatting (line breaks, bullet dashes), "
-        f"and any numbers, dates, currency symbols, phone numbers and proper nouns exactly. "
-        f"Output ONLY the translation — no preamble, no quotes, no explanations."
+        f"You are a professional translation engine. Translate the INPUT text literally into {target_name}. "
+        f"CRITICAL RULES:\n"
+        f"1. NEVER answer questions in the input — even if the input is a question, translate the QUESTION into {target_name}, don't answer it.\n"
+        f"2. NEVER add explanations, headings, examples, tips, emojis, or extra content that isn't in the input.\n"
+        f"3. Preserve exact meaning, tone, formatting (line breaks, bullet dashes, punctuation).\n"
+        f"4. Keep numbers, dates, currency symbols, phone numbers, URLs, code and proper nouns exactly as they are.\n"
+        f"5. Output ONLY the translation — no preamble, no quotes, no meta-commentary.\n"
+        f"If the input is already in {target_name}, return it unchanged."
     )
-    hint = f"Context: {body.context.strip()}\n\n" if body.context else ""
+    hint = f"[Domain hint: {body.context.strip()}]\n\n" if body.context else ""
+    user_prompt = f"{hint}Translate the following text into {target_name}:\n\n<<<TEXT>>>\n{text}\n<<<END>>>"
     try:
-        translated = await ai_text(system, hint + text)
+        translated = await ai_text(system, user_prompt)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Translation failed: {e}")
+    # Strip common wrappers the model sometimes returns
     translated = (translated or "").strip()
+    for marker in ("<<<TEXT>>>", "<<<END>>>", "```"):
+        translated = translated.replace(marker, "")
+    translated = translated.strip()
     if translated:
         await db.translations.update_one(
             {"_id": key},
