@@ -1,9 +1,9 @@
 {
   "app.name": "കാര്യ",
   "app.tagline": "നിർമ്മാണത്തിനുള്ള AI ഓപ്പറേറ്റിംഗ് സിസ്റ്റം",
-
   "nav.dashboard": "കമാൻഡ് സെന്റർ",
   "nav.workforce": "തൊഴിലാളികൾ",
+  "nav.attendance": "ഹാജർ",
   "nav.payroll": "ശമ്പളവും തീർപ്പുകളും",
   "nav.subcontractors": "സബ്‌കോൺട്രാക്‌ടർമാർ",
   "nav.reports": "ദൈനംദിന റിപ്പോർട്ടുകൾ",
@@ -15,13 +15,11 @@
   "nav.knowledge": "ഓർഗനൈസേഷൻ മെമ്മറി",
   "nav.profile": "പ്രൊഫൈൽ",
   "nav.help": "സഹായവും ഡോക്യുമെന്റുകളും",
-
   "mobile.home": "ഹോം",
   "mobile.workforce": "തൊഴിലാളികൾ",
   "mobile.reports": "റിപ്പോർട്ട്",
   "mobile.payroll": "ശമ്പളം",
   "mobile.more": "കൂടുതൽ",
-
   "action.askAI": "AI-യോട് ചോദിക്കുക",
   "action.signOut": "സൈൻ ഔട്ട്",
   "action.save": "മാറ്റങ്ങൾ സേവ് ചെയ്യുക",
@@ -38,7 +36,6 @@
   "action.disconnect": "ഡിസ്കണക്ട്",
   "action.verify": "സ്ഥിരീകരിക്കുക",
   "action.resend": "വീണ്ടും അയയ്ക്കുക",
-
   "profile.overline": "നിങ്ങളുടെ പ്രൊഫൈൽ",
   "profile.language": "ഭാഷ",
   "profile.languageHelp": "മെനുകൾ, തലക്കെട്ടുകൾ, ബട്ടണുകൾ ഉടനടി മാറും. റിപ്പോർട്ട്, SOP, ഫീഡ് ലേഖനങ്ങൾക്ക് ഒരു 'വിവർത്തന' ബട്ടൺ ലഭിക്കും.",
@@ -51,7 +48,6 @@
   "profile.country": "രാജ്യം / പ്രദേശം",
   "profile.complete": "നിങ്ങളുടെ പ്രൊഫൈൽ പൂർത്തിയാണ്.",
   "profile.incomplete": "നിങ്ങളുടെ പ്രൊഫൈൽ അപൂർണ്ണമാണ്.",
-
   "help.title": "സഹായവും ഡോക്യുമെന്റുകളും",
   "help.overline": "കാര്യ എങ്ങനെ ഉപയോഗിക്കാം",
   "help.desc": "ആദ്യത്തെ തൊഴിലാളിയെ ചേർക്കുന്നത് മുതൽ വാട്ട്‌സ്ആപ്പ്, ടെലിഗ്രാം വഴി റിപ്പോർട്ട് അയയ്ക്കുന്നത് വരെ — കാര്യയിൽ നിങ്ങളുടെ നിർമ്മാണ ബിസിനസ്സ് നടത്താൻ വേണ്ടതെല്ലാം.",
@@ -62,7 +58,6 @@
   "help.askingLabel": "ചിന്തിക്കുന്നു…",
   "help.noResults": "പൊരുത്തപ്പെടുന്ന ഒന്നും ഇല്ല. മറ്റൊരു തിരയൽ പരീക്ഷിക്കുക അല്ലെങ്കിൽ AI-യോട് ചോദിക്കുക.",
   "help.sections": "വിഭാഗങ്ങൾ",
-
   "common.loading": "ലോഡ് ചെയ്യുന്നു…",
   "common.empty": "ഇവിടെ ഇതുവരെ ഒന്നുമില്ല.",
   "common.saved": "സേവ് ചെയ്തു",
@@ -73,7 +68,6 @@
   "common.today": "ഇന്ന്",
   "common.yesterday": "ഇന്നലെ",
   "common.week": "ഈ ആഴ്ച",
-
   "translate.button": "വിവർത്തനം",
   "translate.showing": "വിവർത്തനം കാണിക്കുന്നു",
   "translate.original": "ഒറിജിനൽ കാണിക്കുക",

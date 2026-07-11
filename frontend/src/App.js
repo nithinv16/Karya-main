@@ -22,6 +22,8 @@ import Profile from "@/pages/Profile";
 import Help from "@/pages/Help";
 import Expenses from "@/pages/Expenses";
 import { BlogIndex, BlogPost } from "@/pages/Blog";
+import Contact from "@/pages/Contact";
+import Attendance from "@/pages/Attendance";
 
 function Protected({ children, allowIncomplete = false }) {
   const { user, loading } = useAuth();
@@ -63,6 +65,7 @@ function AppRouter() {
       <Route path="/" element={<Home />} />
       <Route path="/blog" element={<BlogIndex />} />
       <Route path="/blog/:slug" element={<BlogPost />} />
+      <Route path="/contact" element={<Contact />} />
       <Route
         path="/onboarding"
         element={
@@ -89,6 +92,7 @@ function AppRouter() {
       >
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/workforce" element={<Workforce />} />
+        <Route path="/attendance" element={<Attendance />} />
         <Route path="/payroll" element={<Payroll />} />
         <Route path="/subcontractors" element={<Subcontractors />} />
         <Route path="/reports" element={<DailyReports />} />

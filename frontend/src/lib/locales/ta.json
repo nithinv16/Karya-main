@@ -1,9 +1,9 @@
 {
   "app.name": "காரிய",
   "app.tagline": "கட்டுமானத்திற்கான AI இயக்க முறைமை",
-
   "nav.dashboard": "கட்டளை மையம்",
   "nav.workforce": "பணியாளர்கள்",
+  "nav.attendance": "வருகை",
   "nav.payroll": "சம்பளம் மற்றும் தீர்வுகள்",
   "nav.subcontractors": "துணை ஒப்பந்ததாரர்கள்",
   "nav.reports": "தினசரி அறிக்கைகள்",
@@ -15,13 +15,11 @@
   "nav.knowledge": "நிறுவன நினைவகம்",
   "nav.profile": "சுயவிவரம்",
   "nav.help": "உதவி & ஆவணங்கள்",
-
   "mobile.home": "முகப்பு",
   "mobile.workforce": "பணியாளர்கள்",
   "mobile.reports": "அறிக்கை",
   "mobile.payroll": "சம்பளம்",
   "mobile.more": "மேலும்",
-
   "action.askAI": "AI-யிடம் கேளுங்கள்",
   "action.signOut": "வெளியேறு",
   "action.save": "மாற்றங்களைச் சேமி",
@@ -38,7 +36,6 @@
   "action.disconnect": "துண்டி",
   "action.verify": "சரிபார்",
   "action.resend": "மீண்டும் அனுப்பு",
-
   "profile.overline": "உங்கள் சுயவிவரம்",
   "profile.language": "மொழி",
   "profile.languageHelp": "மெனுக்கள், தலைப்புகள், பொத்தான்கள் உடனடியாக மாறும். அறிக்கைகள், SOP-கள், ஊட்ட கட்டுரைகளுக்கு 'மொழிபெயர்' பொத்தான் கிடைக்கும்.",
@@ -51,7 +48,6 @@
   "profile.country": "நாடு / பகுதி",
   "profile.complete": "உங்கள் சுயவிவரம் முழுமையானது.",
   "profile.incomplete": "உங்கள் சுயவிவரம் முழுமையடையவில்லை.",
-
   "help.title": "உதவி & ஆவணங்கள்",
   "help.overline": "காரியவை எப்படி பயன்படுத்துவது",
   "help.desc": "முதல் தொழிலாளியை சேர்ப்பதில் இருந்து WhatsApp, Telegram வழியாக தினசரி அறிக்கை அனுப்புவது வரை — காரியவில் உங்கள் கட்டுமான வணிகத்தை நடத்த தேவையான அனைத்தும்.",
@@ -62,7 +58,6 @@
   "help.askingLabel": "சிந்திக்கிறது…",
   "help.noResults": "பொருந்துவது எதுவும் இல்லை. வேறு தேடலை முயற்சி செய்யவும் அல்லது AI-யிடம் கேளுங்கள்.",
   "help.sections": "பிரிவுகள்",
-
   "common.loading": "ஏற்றுகிறது…",
   "common.empty": "இங்கு இன்னும் எதுவும் இல்லை.",
   "common.saved": "சேமிக்கப்பட்டது",
@@ -73,7 +68,6 @@
   "common.today": "இன்று",
   "common.yesterday": "நேற்று",
   "common.week": "இந்த வாரம்",
-
   "translate.button": "மொழிபெயர்",
   "translate.showing": "மொழிபெயர்ப்பைக் காட்டுகிறது",
   "translate.original": "மூலத்தைக் காட்டு",

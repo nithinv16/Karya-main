@@ -1,9 +1,9 @@
 {
   "app.name": "Karya",
   "app.tagline": "AI OS for Construction",
-
   "nav.dashboard": "Command Center",
   "nav.workforce": "Workforce",
+  "nav.attendance": "Attendance",
   "nav.payroll": "Payroll & Settlements",
   "nav.subcontractors": "Subcontractors",
   "nav.reports": "Daily Reports",
@@ -15,13 +15,11 @@
   "nav.knowledge": "Org Memory",
   "nav.profile": "Profile",
   "nav.help": "Help & Docs",
-
   "mobile.home": "Home",
   "mobile.workforce": "Workforce",
   "mobile.reports": "Reports",
   "mobile.payroll": "Payroll",
   "mobile.more": "More",
-
   "action.askAI": "Ask AI",
   "action.signOut": "Sign out",
   "action.save": "Save changes",
@@ -38,7 +36,6 @@
   "action.disconnect": "Disconnect",
   "action.verify": "Verify",
   "action.resend": "Resend",
-
   "profile.overline": "Your profile",
   "profile.language": "Language",
   "profile.languageHelp": "Menu items, headings and buttons switch instantly. Report bodies, SOPs and feed articles get a Translate button.",
@@ -51,7 +48,6 @@
   "profile.country": "Country / region",
   "profile.complete": "Your profile is complete.",
   "profile.incomplete": "Your profile is incomplete.",
-
   "help.title": "Help & Documentation",
   "help.overline": "How to use Karya",
   "help.desc": "Everything you need to run your construction business on Karya — from adding your first worker to shipping a daily report via WhatsApp and Telegram.",
@@ -62,7 +58,6 @@
   "help.askingLabel": "Thinking…",
   "help.noResults": "Nothing matches that. Try a different search or Ask AI.",
   "help.sections": "Sections",
-
   "common.loading": "Loading…",
   "common.empty": "Nothing here yet.",
   "common.saved": "Saved",
@@ -73,7 +68,6 @@
   "common.today": "Today",
   "common.yesterday": "Yesterday",
   "common.week": "This week",
-
   "translate.button": "Translate",
   "translate.showing": "Showing translation",
   "translate.original": "Show original",

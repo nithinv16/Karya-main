@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import html
 import json
 import uuid
 import secrets
@@ -58,6 +59,12 @@ TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
 TWILIO_WHATSAPP_FROM = (os.environ.get("TWILIO_WHATSAPP_FROM") or "").strip() or "whatsapp:+14155238886"
 TWILIO_VERIFY_SERVICE_SID = os.environ.get("TWILIO_VERIFY_SERVICE_SID", "").strip()
 TWILIO_VERIFY_SERVICE_NAME = (os.environ.get("TWILIO_VERIFY_SERVICE_NAME") or "").strip() or "Karya AI"
+# Contact form recipient: a private Telegram username (never surfaced in UI).
+# We watch inbound messages and cache the chat_id when this user pings the bot,
+# then send /api/contact submissions to that chat_id. Falls back to email log.
+CONTACT_TG_USERNAME = (os.environ.get("CONTACT_TG_USERNAME") or "").strip()
+CONTACT_EMAIL = (os.environ.get("CONTACT_EMAIL") or "").strip() or "admin@dukaaon.in"
+COMPANY_LEGAL_NAME = "SIXN8 Technologies Private Ltd"
 # Auto-provisioned Verify Service SID (cached after first successful create/lookup).
 _AUTO_VERIFY_SID: Optional[str] = None
 
@@ -643,6 +650,170 @@ async def update_onboarding(worker_id: str, body: OnboardingIn, user: dict = Dep
         raise HTTPException(status_code=404, detail="Worker not found")
     return await db.workers.find_one({"id": worker_id}, {"_id": 0})
 
+
+# ---------------------------------------------------------------- attendance
+# Two shapes coexist for historic reasons:
+#   • per-worker rows (worker_id set, status in present/absent/half-day, count=1)
+#   • aggregate rows (worker_id=None, project_id set, count=N)  ← what the
+#     Telegram bot writes when the supervisor says "10 workers at Site A".
+# The list endpoint returns both; the roster endpoint returns only the per-worker
+# rows for a specific date.
+
+_ATTENDANCE_STATUSES = ("present", "absent", "half_day")
+
+
+class AttendanceMarkIn(BaseModel):
+    date: str = ""  # YYYY-MM-DD; defaults to today
+    worker_id: Optional[str] = None
+    project_id: Optional[str] = None
+    status: str = "present"  # present|absent|half_day
+    note: Optional[str] = None
+
+
+class AttendanceBulkIn(BaseModel):
+    date: str = ""
+    project_id: Optional[str] = None
+    entries: List[AttendanceMarkIn] = []
+
+
+class AttendanceHeadcountIn(BaseModel):
+    """Quick 'N workers came today' entry for supervisors who don't track by name."""
+    date: str = ""
+    project_id: Optional[str] = None
+    count: int = 1
+    note: Optional[str] = None
+
+
+@api.get("/attendance")
+async def list_attendance(
+    user: dict = Depends(get_current_user),
+    date: str = "",
+    from_date: str = "",
+    to_date: str = "",
+    project_id: str = "",
+    worker_id: str = "",
+    limit: int = 500,
+):
+    q: Dict[str, Any] = {"owner_id": user["user_id"]}
+    if date:
+        q["date"] = date
+    elif from_date or to_date:
+        q["date"] = {}
+        if from_date: q["date"]["$gte"] = from_date
+        if to_date: q["date"]["$lte"] = to_date
+    if project_id:
+        q["project_id"] = project_id
+    if worker_id:
+        q["worker_id"] = worker_id
+    limit = max(1, min(int(limit or 500), 2000))
+    rows = await db.attendance.find(q, {"_id": 0}).sort("date", -1).limit(limit).to_list(limit)
+    return {"items": rows, "count": len(rows)}
+
+
+@api.get("/attendance/roster")
+async def attendance_roster(
+    user: dict = Depends(get_current_user),
+    date: str = "",
+    project_id: str = "",
+):
+    """Return every worker with their status for the given date (for a checklist UI)."""
+    day = date or today_str()
+    uid = user["user_id"]
+    w_query: Dict[str, Any] = {"owner_id": uid}
+    if project_id:
+        w_query["project_id"] = project_id
+    workers = await db.workers.find(w_query, {"_id": 0}).sort("name", 1).to_list(2000)
+    att_q: Dict[str, Any] = {"owner_id": uid, "date": day, "worker_id": {"$ne": None}}
+    att = await db.attendance.find(att_q, {"_id": 0}).to_list(5000)
+    by_worker = {a["worker_id"]: a for a in att}
+    roster = []
+    for w in workers:
+        rec = by_worker.get(w["id"])
+        roster.append({
+            "worker_id": w["id"],
+            "name": w.get("name") or "",
+            "role": w.get("role") or "",
+            "project_id": w.get("project_id"),
+            "rate": w.get("rate") or 0,
+            "rate_type": w.get("rate_type") or "daily",
+            "status": (rec or {}).get("status") or "unmarked",
+            "note": (rec or {}).get("note") or "",
+            "attendance_id": (rec or {}).get("id"),
+        })
+    # Also fetch aggregate headcount rows for the day (from Telegram supervisors).
+    head_q = {"owner_id": uid, "date": day, "worker_id": None}
+    if project_id:
+        head_q["project_id"] = project_id
+    headcounts = await db.attendance.find(head_q, {"_id": 0}).to_list(200)
+    return {"date": day, "project_id": project_id or None, "roster": roster, "headcounts": headcounts}
+
+
+@api.post("/attendance/mark")
+async def mark_attendance(body: AttendanceMarkIn, user: dict = Depends(get_current_user)):
+    if not body.worker_id:
+        raise HTTPException(status_code=400, detail="worker_id required")
+    if body.status not in _ATTENDANCE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of {_ATTENDANCE_STATUSES}")
+    uid = user["user_id"]
+    worker = await db.workers.find_one({"id": body.worker_id, "owner_id": uid}, {"_id": 0})
+    if not worker:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    day = body.date or today_str()
+    project_id = body.project_id or worker.get("project_id")
+    # Upsert: one row per (worker, date).
+    doc = {
+        "id": new_id(), "owner_id": uid, "worker_id": worker["id"],
+        "project_id": project_id, "date": day, "status": body.status,
+        "count": 1 if body.status != "absent" else 0,
+        "note": (body.note or "").strip() or None,
+        "created_at": now_iso(),
+    }
+    existing = await db.attendance.find_one({"owner_id": uid, "worker_id": worker["id"], "date": day}, {"_id": 0, "id": 1})
+    if existing:
+        doc["id"] = existing["id"]
+        await db.attendance.update_one({"id": existing["id"]}, {"$set": {k: v for k, v in doc.items() if k not in ("id", "created_at")}})
+    else:
+        await db.attendance.insert_one({**doc})
+    return doc
+
+
+@api.post("/attendance/bulk")
+async def bulk_mark_attendance(body: AttendanceBulkIn, user: dict = Depends(get_current_user)):
+    day = body.date or today_str()
+    results = []
+    for e in body.entries:
+        payload = AttendanceMarkIn(date=day, worker_id=e.worker_id, project_id=e.project_id or body.project_id, status=e.status, note=e.note)
+        try:
+            results.append(await mark_attendance(payload, user))
+        except HTTPException as exc:
+            results.append({"error": exc.detail, "worker_id": e.worker_id})
+    return {"date": day, "results": results}
+
+
+@api.post("/attendance/headcount")
+async def headcount_attendance(body: AttendanceHeadcountIn, user: dict = Depends(get_current_user)):
+    """Log 'N workers at project X on date Y' without naming each worker."""
+    if body.count < 0 or body.count > 10000:
+        raise HTTPException(status_code=400, detail="count out of range")
+    day = body.date or today_str()
+    doc = {
+        "id": new_id(), "owner_id": user["user_id"], "worker_id": None,
+        "project_id": body.project_id or None, "date": day,
+        "count": int(body.count), "status": None,
+        "note": (body.note or "").strip() or None,
+        "created_at": now_iso(),
+    }
+    await db.attendance.insert_one({**doc})
+    return doc
+
+
+@api.delete("/attendance/{attendance_id}")
+async def delete_attendance(attendance_id: str, user: dict = Depends(get_current_user)):
+    r = await db.attendance.delete_one({"id": attendance_id, "owner_id": user["user_id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"deleted": True}
+
 # ---------------------------------------------------------------- transactions & ledger
 
 class TxnIn(BaseModel):
@@ -1223,6 +1394,7 @@ WELCOME_LINKED = (
     "Tip: add a caption like <i>“this is Ramesh's Aadhaar”</i> and I skip the question.\n\n"
     "<b>📋 Commands</b>\n"
     "• /report — generate today's daily site report from your drafts\n"
+    "• /attendance — mark headcount or per-worker attendance (present/absent/half day)\n"
     "• /help &lt;question&gt; — ask anything about Karya (in your language)\n"
     "• /unlink — disconnect this chat\n\n"
     "Ready when you are — send your first update. 🚧"
@@ -1694,6 +1866,79 @@ async def _handle_tg_report_command(chat_id: int, user: dict):
     )
 
 
+async def _handle_tg_attendance_command(chat_id: int, user: dict, text: str):
+    """
+    /attendance — free-form headcount + project picker.
+    Usage examples:
+      • /attendance                → show project picker for a quick headcount
+      • /attendance 12             → 12 workers today (project picker follows)
+      • /attendance 12 Site A      → 12 workers at Site A today
+      • /attendance Ramesh present → mark Ramesh present today
+    """
+    uid = user["user_id"]
+    arg = text[len("/attendance"):].strip()
+    projects = await db.projects.find({"owner_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(2000)
+
+    # Path A: worker-status form ("Ramesh present" / "Suresh absent" / "Manoj half day").
+    m = re.match(r"^(.+?)\s+(present|absent|half[\s-]?day|halfday)$", arg, re.IGNORECASE) if arg else None
+    if m:
+        who, status_raw = m.group(1).strip(), m.group(2).lower()
+        status = "half_day" if status_raw.replace("-", "").replace(" ", "") == "halfday" else status_raw
+        worker = find_by_name(workers, who)
+        if not worker:
+            names = ", ".join(w["name"] for w in workers[:10]) or "none yet"
+            await tg_send(chat_id, f"⚠️ Couldn't find worker <b>{html.escape(who)}</b>. Known: {names}.")
+            return
+        try:
+            await mark_attendance(AttendanceMarkIn(worker_id=worker["id"], status=status), user)
+        except HTTPException as e:
+            await tg_send(chat_id, f"⚠️ {e.detail}")
+            return
+        emoji = "✅" if status == "present" else ("🌓" if status == "half_day" else "❌")
+        await tg_send(chat_id, f"{emoji} Marked <b>{html.escape(worker['name'])}</b> as <b>{status.replace('_', ' ')}</b> for today.")
+        return
+
+    # Path B: headcount form ("12" or "12 Site A").
+    m2 = re.match(r"^(\d+)(?:\s+(.+))?$", arg) if arg else None
+    if m2:
+        count = max(0, min(int(m2.group(1)), 10000))
+        proj_name = (m2.group(2) or "").strip()
+        proj = find_by_name(projects, proj_name) if proj_name else None
+        if not proj and len(projects) > 1:
+            # Ask which project via inline keyboard.
+            buttons = [[{"text": p["name"][:56], "callback_data": f"att_head|{count}|{p['id']}"}] for p in projects[:8]]
+            buttons.append([{"text": "— No project —", "callback_data": f"att_head|{count}|__none__"}])
+            await tg_send(chat_id, f"👷 <b>{count} workers today.</b> Which project?", reply_markup={"inline_keyboard": buttons})
+            return
+        proj = proj or (projects[0] if len(projects) == 1 else None)
+        await headcount_attendance(AttendanceHeadcountIn(count=count, project_id=proj["id"] if proj else None), user)
+        where = f" at <b>{html.escape(proj['name'])}</b>" if proj else ""
+        await tg_send(chat_id, f"✅ Logged <b>{count}</b> workers present today{where}.")
+        return
+
+    # Path C: no arg — show a quick help.
+    if not arg:
+        today_att = await db.attendance.find({"owner_id": uid, "date": today_str()}, {"_id": 0}).to_list(500)
+        marked = sum(1 for a in today_att if a.get("worker_id") and a.get("status") == "present")
+        head = sum(int(a.get("count") or 0) for a in today_att if not a.get("worker_id"))
+        await tg_send(
+            chat_id,
+            (
+                "👷 <b>Attendance — today</b>\n"
+                f"Named present: <b>{marked}</b>\n"
+                f"Headcount tally: <b>{head}</b>\n\n"
+                "Try:\n"
+                "• <code>/attendance 12</code> — quick headcount (asks project)\n"
+                "• <code>/attendance 12 Site A</code> — headcount for a specific site\n"
+                "• <code>/attendance Ramesh present</code> — per-worker (present/absent/half day)\n"
+            ),
+        )
+        return
+
+    await tg_send(chat_id, "⚠️ Couldn't parse that. Try <code>/attendance 12</code> or <code>/attendance Ramesh present</code>.")
+
+
 @api.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     """Telegram calls this endpoint for every update. Auth via the secret header."""
@@ -1734,6 +1979,20 @@ async def telegram_webhook(request: Request):
                 else:
                     await _generate_and_send_report(cq_chat_id, user, project)
             return {"ok": True}
+        # Handle /attendance headcount picker callbacks.
+        if data.startswith("att_head|"):
+            _, count_s, pid = data.split("|", 2)
+            try:
+                count = int(count_s)
+            except ValueError:
+                count = 1
+            proj = None
+            if pid != "__none__":
+                proj = await db.projects.find_one({"owner_id": user["user_id"], "id": pid}, {"_id": 0})
+            await headcount_attendance(AttendanceHeadcountIn(count=count, project_id=proj["id"] if proj else None), user)
+            where = f" at <b>{html.escape(proj['name'])}</b>" if proj else ""
+            await tg_send(cq_chat_id, f"✅ Logged <b>{count}</b> workers present today{where}.")
+            return {"ok": True}
         if not pending:
             await tg_send(cq_chat_id, "Nothing pending — send me a photo or document first.")
             return {"ok": True}
@@ -1753,6 +2012,24 @@ async def telegram_webhook(request: Request):
     caption = (msg.get("caption") or "").strip()
     if not chat_id:
         return {"ok": True}
+
+    # Silently capture the ops-owner's chat_id the first time they message the
+    # bot so /api/contact submissions can be delivered to them. The handle is
+    # kept in env (CONTACT_TG_USERNAME) — we never surface it in any UI.
+    try:
+        uname = (from_user.get("username") or "").lstrip("@").lower()
+        want = (CONTACT_TG_USERNAME or "").lstrip("@").lower()
+        if want and uname and uname == want:
+            existing = await db.system_config.find_one({"key": "contact_chat_id"})
+            if not existing or str(existing.get("value")) != str(chat_id):
+                await db.system_config.update_one(
+                    {"key": "contact_chat_id"},
+                    {"$set": {"value": str(chat_id), "updated_at": now_iso()}},
+                    upsert=True,
+                )
+                logger.info("Captured contact recipient chat_id.")
+    except Exception as e:
+        logger.warning(f"contact chat_id capture skipped: {e}")
 
     # /start handles linking (works even when unlinked).
     if text.startswith("/start"):
@@ -1782,6 +2059,9 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
     if text.startswith("/report"):
         await _handle_tg_report_command(chat_id, user)
+        return {"ok": True}
+    if text.startswith("/attendance"):
+        await _handle_tg_attendance_command(chat_id, user, text)
         return {"ok": True}
 
     # Media handling.
@@ -3275,6 +3555,97 @@ async def help_ask(body: HelpAskIn, user: dict = Depends(get_current_user)):
     lang = (user.get("language") or "en").lower()
     answer = await help_answer(question, lang)
     return {"answer": answer, "lang": lang}
+
+
+# ---------------------------------------------------------------- contact & company
+class ContactIn(BaseModel):
+    name: str = ""
+    email: str = ""
+    phone: str = ""
+    company: str = ""
+    subject: str = ""
+    message: str = ""
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@api.get("/company-info")
+async def company_info():
+    """Public: legal + support info displayed on the Contact Us page and footer."""
+    return {
+        "legal_name": COMPANY_LEGAL_NAME,
+        "product_name": APP_NAME,
+        "support_email": CONTACT_EMAIL,
+        "website": "https://karyaai.app",
+    }
+
+
+@api.post("/contact")
+async def submit_contact(body: ContactIn, request: Request):
+    """Public form — validates input, saves the submission, and quietly delivers
+    it to the Karya ops-owner via Telegram (chat_id resolved server-side; the
+    recipient's handle is never exposed to clients)."""
+    await rate_limit(f"contact:{request.client.host if request.client else 'anon'}", limit=5, window_seconds=300)
+    name = (body.name or "").strip()[:120]
+    email = (body.email or "").strip()[:120]
+    phone = (body.phone or "").strip()[:40]
+    company = (body.company or "").strip()[:120]
+    subject = (body.subject or "").strip()[:200]
+    message = (body.message or "").strip()[:5000]
+    if not name:
+        raise HTTPException(status_code=400, detail="Please enter your name.")
+    if not email or not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Enter a valid email address.")
+    if len(message) < 10:
+        raise HTTPException(status_code=400, detail="Please share a bit more detail (at least 10 characters).")
+    submission = {
+        "id": new_id(),
+        "name": name, "email": email, "phone": phone, "company": company,
+        "subject": subject or "Contact form submission",
+        "message": message,
+        "source_ip": (request.client.host if request.client else "") or "",
+        "user_agent": request.headers.get("user-agent", "")[:300],
+        "status": "new",
+        "delivered_via": [],
+        "created_at": now_iso(),
+    }
+    await db.contact_submissions.insert_one({**submission})
+
+    # Attempt Telegram delivery to the cached ops-owner chat_id.
+    delivered = []
+    try:
+        chat_id: Optional[int] = None
+        cached = await db.system_config.find_one({"key": "contact_chat_id"})
+        if cached and cached.get("value"):
+            try:
+                chat_id = int(cached["value"])
+            except (TypeError, ValueError):
+                chat_id = None
+        if chat_id and _tg_configured():
+            text = (
+                "📮 <b>New contact form submission</b>\n\n"
+                f"<b>Name:</b> {html.escape(name)}\n"
+                f"<b>Email:</b> {html.escape(email)}\n"
+                + (f"<b>Phone:</b> {html.escape(phone)}\n" if phone else "")
+                + (f"<b>Company:</b> {html.escape(company)}\n" if company else "")
+                + f"<b>Subject:</b> {html.escape(subject or '—')}\n\n"
+                f"<b>Message:</b>\n{html.escape(message)[:3500]}"
+            )
+            tok = _TG_USER_LANG.set("en")  # never translate an internal ops alert
+            try:
+                await tg_send(chat_id, text)
+            finally:
+                _TG_USER_LANG.reset(tok)
+            delivered.append("telegram")
+    except Exception as e:
+        logger.warning(f"contact telegram delivery failed: {e}")
+
+    if delivered:
+        await db.contact_submissions.update_one(
+            {"id": submission["id"]}, {"$set": {"delivered_via": delivered, "delivered_at": now_iso()}}
+        )
+    return {"ok": True, "id": submission["id"]}
 
 
 # ---- proactive telegram pings ------------------------------------------------

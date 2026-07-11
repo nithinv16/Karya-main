@@ -1,9 +1,9 @@
 {
   "app.name": "कार्य",
   "app.tagline": "निर्माण के लिए AI ऑपरेटिंग सिस्टम",
-
   "nav.dashboard": "कमांड सेंटर",
   "nav.workforce": "कार्यबल",
+  "nav.attendance": "उपस्थिति",
   "nav.payroll": "वेतन और भुगतान",
   "nav.subcontractors": "उपठेकेदार",
   "nav.reports": "दैनिक रिपोर्ट",
@@ -15,13 +15,11 @@
   "nav.knowledge": "संगठन मेमोरी",
   "nav.profile": "प्रोफ़ाइल",
   "nav.help": "मदद और दस्तावेज़",
-
   "mobile.home": "होम",
   "mobile.workforce": "कार्यबल",
   "mobile.reports": "रिपोर्ट",
   "mobile.payroll": "वेतन",
   "mobile.more": "अधिक",
-
   "action.askAI": "AI से पूछें",
   "action.signOut": "साइन आउट",
   "action.save": "बदलाव सहेजें",
@@ -38,7 +36,6 @@
   "action.disconnect": "डिस्कनेक्ट",
   "action.verify": "सत्यापित करें",
   "action.resend": "फिर से भेजें",
-
   "profile.overline": "आपकी प्रोफ़ाइल",
   "profile.language": "भाषा",
   "profile.languageHelp": "मेनू, शीर्षक और बटन तुरंत बदल जाते हैं। रिपोर्ट, SOP और फ़ीड लेखों के लिए 'अनुवाद' बटन मिलेगा।",
@@ -51,7 +48,6 @@
   "profile.country": "देश / क्षेत्र",
   "profile.complete": "आपकी प्रोफ़ाइल पूरी है।",
   "profile.incomplete": "आपकी प्रोफ़ाइल अधूरी है।",
-
   "help.title": "मदद और दस्तावेज़",
   "help.overline": "कार्य का उपयोग कैसे करें",
   "help.desc": "पहला कर्मचारी जोड़ने से लेकर व्हाट्सएप और टेलीग्राम पर दैनिक रिपोर्ट भेजने तक — कार्य पर अपना निर्माण व्यवसाय चलाने के लिए सब कुछ।",
@@ -62,7 +58,6 @@
   "help.askingLabel": "सोच रहा है…",
   "help.noResults": "कुछ नहीं मिला। दूसरी खोज करें या AI से पूछें।",
   "help.sections": "अनुभाग",
-
   "common.loading": "लोड हो रहा है…",
   "common.empty": "अभी यहाँ कुछ नहीं है।",
   "common.saved": "सहेजा गया",
@@ -73,7 +68,6 @@
   "common.today": "आज",
   "common.yesterday": "कल",
   "common.week": "इस सप्ताह",
-
   "translate.button": "अनुवाद",
   "translate.showing": "अनुवाद दिखा रहा है",
   "translate.original": "मूल दिखाएँ",

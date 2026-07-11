@@ -1,9 +1,9 @@
 {
   "app.name": "కార్య",
   "app.tagline": "నిర్మాణం కోసం AI ఆపరేటింగ్ సిస్టం",
-
   "nav.dashboard": "కమాండ్ సెంటర్",
   "nav.workforce": "కార్మికులు",
+  "nav.attendance": "హాజరు",
   "nav.payroll": "వేతనం & పరిష్కారాలు",
   "nav.subcontractors": "సబ్ కాంట్రాక్టర్లు",
   "nav.reports": "రోజువారీ నివేదికలు",
@@ -15,13 +15,11 @@
   "nav.knowledge": "సంస్థ మెమరీ",
   "nav.profile": "ప్రొఫైల్",
   "nav.help": "సహాయం & పత్రాలు",
-
   "mobile.home": "హోమ్",
   "mobile.workforce": "కార్మికులు",
   "mobile.reports": "నివేదిక",
   "mobile.payroll": "వేతనం",
   "mobile.more": "మరిన్ని",
-
   "action.askAI": "AIని అడగండి",
   "action.signOut": "సైన్ అవుట్",
   "action.save": "మార్పులను సేవ్ చేయండి",
@@ -38,7 +36,6 @@
   "action.disconnect": "డిస్‌కనెక్ట్",
   "action.verify": "ధృవీకరించు",
   "action.resend": "మళ్లీ పంపండి",
-
   "profile.overline": "మీ ప్రొఫైల్",
   "profile.language": "భాష",
   "profile.languageHelp": "మెనూలు, శీర్షికలు, బటన్‌లు తక్షణమే మారతాయి. నివేదికలు, SOP-లు, ఫీడ్ కథనాలకు 'అనువదించండి' బటన్ ఉంటుంది.",
@@ -51,7 +48,6 @@
   "profile.country": "దేశం / ప్రాంతం",
   "profile.complete": "మీ ప్రొఫైల్ పూర్తయింది.",
   "profile.incomplete": "మీ ప్రొఫైల్ అసంపూర్ణంగా ఉంది.",
-
   "help.title": "సహాయం & పత్రాలు",
   "help.overline": "కార్యను ఎలా ఉపయోగించాలి",
   "help.desc": "మొదటి కార్మికుని జోడించడం నుండి WhatsApp, Telegram ద్వారా రోజువారీ నివేదిక పంపడం వరకు — కార్యలో మీ నిర్మాణ వ్యాపారాన్ని నడపడానికి కావలసినవన్నీ.",
@@ -62,7 +58,6 @@
   "help.askingLabel": "ఆలోచిస్తోంది…",
   "help.noResults": "సరిపోలిక ఏమీ లేదు. వేరే వెతుక్కోండి లేదా AIని అడగండి.",
   "help.sections": "విభాగాలు",
-
   "common.loading": "లోడ్ అవుతోంది…",
   "common.empty": "ఇక్కడ ఇంకా ఏమీ లేదు.",
   "common.saved": "సేవ్ అయింది",
@@ -73,7 +68,6 @@
   "common.today": "నేడు",
   "common.yesterday": "నిన్న",
   "common.week": "ఈ వారం",
-
   "translate.button": "అనువదించండి",
   "translate.showing": "అనువాదాన్ని చూపిస్తోంది",
   "translate.original": "అసలు చూపించు",

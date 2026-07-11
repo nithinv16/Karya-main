@@ -75,7 +75,17 @@ export default function Login() {
           )}
         </div>
 
-        <p className="text-xs text-[#71717A]">Built for contractors, builders, MEP & civil firms across emerging markets.</p>
+        <div className="text-xs text-[#71717A] space-y-1">
+          <p>Built for contractors, builders, MEP & civil firms across emerging markets.</p>
+          <p className="flex flex-wrap items-center gap-3">
+            <a href="/blog" className="hover:text-[#09090B] hover:underline underline-offset-2" data-testid="footer-blog">Blog</a>
+            <span>·</span>
+            <a href="/contact" className="hover:text-[#09090B] hover:underline underline-offset-2" data-testid="footer-contact">Contact us</a>
+            <span>·</span>
+            <a href="mailto:admin@dukaaon.in" className="hover:text-[#09090B] hover:underline underline-offset-2">admin@dukaaon.in</a>
+          </p>
+          <p className="pt-2">© {new Date().getFullYear()} <span className="font-semibold">SIXN8 Technologies Private Ltd</span></p>
+        </div>
       </div>
 
       {/* Right: image + features */}
