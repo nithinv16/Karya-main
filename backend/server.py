@@ -1015,8 +1015,11 @@ async def tg_speak(chat_id: int, text: str, lang: str = "en"):
 
 async def tg_send(chat_id: int, text: str, reply_markup: Optional[dict] = None):
     # Translate outgoing reply to the linked user's language when we know it.
+    # Skip very short strings (confirmations, echoes, ✅ acks) — they don't warrant
+    # an LLM roundtrip and often contain proper nouns we'd rather not translate.
     lang = _TG_USER_LANG.get()
-    if lang and lang != "en":
+    stripped = (text or "").strip()
+    if lang and lang != "en" and len(stripped) >= 40:
         try:
             text = await translate_text(text, lang, context="Telegram bot reply for a construction contractor")
         except Exception as e:
@@ -1616,6 +1619,7 @@ async def telegram_webhook(request: Request):
         if not user:
             await tg_send(cq_chat_id, WELCOME_UNLINKED)
             return {"ok": True}
+        _TG_USER_LANG.set(user.get("language") or "en")
         pending = await _get_pending(user["user_id"])
         # Handle /report project picker callbacks (no pending required).
         if data.startswith("report_pick|"):
@@ -1660,6 +1664,7 @@ async def telegram_webhook(request: Request):
     if not user:
         await tg_send(chat_id, WELCOME_UNLINKED)
         return {"ok": True}
+    _TG_USER_LANG.set(user.get("language") or "en")
 
     if text.startswith("/help"):
         ctx = country_ctx(user)
@@ -2743,14 +2748,23 @@ class ExpenseIn(BaseModel):
 
 
 @api.get("/expenses")
-async def list_expenses(user: dict = Depends(get_current_user), q: str = "", category: str = ""):
+async def list_expenses(user: dict = Depends(get_current_user), q: str = "", category: str = "", limit: int = 500, offset: int = 0):
     query: Dict[str, Any] = {"owner_id": user["user_id"]}
     if category:
         query["category"] = category
-    docs = await db.expenses.find(query, {"_id": 0}).sort("date", -1).to_list(500)
     if q:
-        needle = q.lower()
-        docs = [d for d in docs if needle in (d.get("vendor", "") + " " + d.get("summary", "")).lower()]
+        # Case-insensitive regex on vendor + summary. Escape any regex metacharacters
+        # in the user's query so a trailing "." doesn't turn into "match any char".
+        needle = re.escape(q.strip())
+        if needle:
+            query["$or"] = [
+                {"vendor": {"$regex": needle, "$options": "i"}},
+                {"summary": {"$regex": needle, "$options": "i"}},
+            ]
+    limit = max(1, min(int(limit or 500), 2000))
+    offset = max(0, int(offset or 0))
+    total_count = await db.expenses.count_documents(query)
+    docs = await db.expenses.find(query, {"_id": 0}).sort("date", -1).skip(offset).limit(limit).to_list(limit)
     ctx = country_ctx(user)
     total = round(sum(float(d.get("amount") or 0) for d in docs), 2)
     by_cat: Dict[str, float] = {}
@@ -2759,6 +2773,9 @@ async def list_expenses(user: dict = Depends(get_current_user), q: str = "", cat
     return {
         "items": docs,
         "total": total,
+        "count": total_count,
+        "limit": limit,
+        "offset": offset,
         "currency": ctx["currency_code"],
         "by_category": [{"category": k, "amount": round(v, 2)} for k, v in sorted(by_cat.items(), key=lambda kv: -kv[1])],
     }
@@ -3060,7 +3077,293 @@ async def help_ask(body: HelpAskIn, user: dict = Depends(get_current_user)):
     return {"answer": answer, "lang": lang}
 
 
-# ---- root + router mounts ----------------------------------------------------
+# ---- proactive telegram pings ------------------------------------------------
+# User-configurable morning briefing / compliance-deadline / payroll-reminder
+# nudges sent via the linked Telegram bot. Runs as an in-process asyncio loop
+# (wakes every 5 min), dedupes per-day via db.ping_log.
+
+_DEFAULT_TZ_BY_COUNTRY = {"IN": "Asia/Kolkata", "AE": "Asia/Dubai"}
+
+_PING_TYPES = ("morning_briefing", "compliance_alerts", "payroll_reminder")
+
+_DEFAULT_NOTIFICATIONS = {
+    "timezone": "Asia/Kolkata",
+    "morning_briefing": {"enabled": True, "time": "08:00"},
+    "compliance_alerts": {"enabled": True},
+    "payroll_reminder": {"enabled": True, "time": "09:00", "days": [1, 5]},  # Mon (1) + Fri (5), ISO weekday
+}
+
+
+def _notifications_for(user: dict) -> Dict[str, Any]:
+    """Merge user's saved notification prefs onto sensible defaults."""
+    saved = user.get("notifications") or {}
+    merged = {
+        "timezone": saved.get("timezone") or _DEFAULT_TZ_BY_COUNTRY.get(user.get("country") or "IN", "Asia/Kolkata"),
+        "morning_briefing": {**_DEFAULT_NOTIFICATIONS["morning_briefing"], **(saved.get("morning_briefing") or {})},
+        "compliance_alerts": {**_DEFAULT_NOTIFICATIONS["compliance_alerts"], **(saved.get("compliance_alerts") or {})},
+        "payroll_reminder": {**_DEFAULT_NOTIFICATIONS["payroll_reminder"], **(saved.get("payroll_reminder") or {})},
+    }
+    return merged
+
+
+class NotificationsIn(BaseModel):
+    timezone: Optional[str] = None
+    morning_briefing: Optional[Dict[str, Any]] = None
+    compliance_alerts: Optional[Dict[str, Any]] = None
+    payroll_reminder: Optional[Dict[str, Any]] = None
+
+
+@api.get("/telegram/notifications")
+async def get_notifications(user: dict = Depends(get_current_user)):
+    return {"notifications": _notifications_for(user), "telegram_linked": bool(user.get("telegram_chat_id"))}
+
+
+@api.put("/telegram/notifications")
+async def update_notifications(body: NotificationsIn, user: dict = Depends(get_current_user)):
+    # Validate the timezone if provided; fall back to default when invalid.
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    patch: Dict[str, Any] = {}
+    if body.timezone is not None:
+        tz = (body.timezone or "").strip()
+        try:
+            ZoneInfo(tz)
+            patch["timezone"] = tz
+        except (ZoneInfoNotFoundError, Exception):
+            raise HTTPException(status_code=400, detail=f"Unknown timezone '{tz}'")
+    for key in ("morning_briefing", "compliance_alerts", "payroll_reminder"):
+        raw = getattr(body, key)
+        if raw is None:
+            continue
+        clean: Dict[str, Any] = {}
+        if "enabled" in raw:
+            clean["enabled"] = bool(raw["enabled"])
+        if "time" in raw and raw["time"] is not None:
+            t = (str(raw["time"]) or "").strip()
+            if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", t):
+                raise HTTPException(status_code=400, detail=f"Invalid time '{t}' for {key} (expected HH:MM 24-hour)")
+            clean["time"] = t
+        if "days" in raw and raw["days"] is not None:
+            days = [int(d) for d in raw["days"] if isinstance(d, (int, float)) or (isinstance(d, str) and d.isdigit())]
+            days = sorted({d for d in days if 1 <= d <= 7})
+            clean["days"] = days
+        patch[key] = clean
+    if not patch:
+        return {"notifications": _notifications_for(user)}
+    # Merge into user.notifications atomically (preserve untouched keys).
+    existing = user.get("notifications") or {}
+    merged = {**existing}
+    for k, v in patch.items():
+        if k == "timezone":
+            merged["timezone"] = v
+        else:
+            merged[k] = {**(existing.get(k) or {}), **v}
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"notifications": merged}})
+    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return {"notifications": _notifications_for(fresh), "telegram_linked": bool(fresh.get("telegram_chat_id"))}
+
+
+async def _ping_already_sent(uid: str, ping_type: str, day_key: str) -> bool:
+    return bool(await db.ping_log.find_one({"user_id": uid, "type": ping_type, "day": day_key}))
+
+
+async def _mark_ping_sent(uid: str, ping_type: str, day_key: str):
+    await db.ping_log.update_one(
+        {"user_id": uid, "type": ping_type, "day": day_key},
+        {"$set": {"sent_at": now_iso()}},
+        upsert=True,
+    )
+
+
+def _localtime_now(tz_name: str) -> Optional[datetime]:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    try:
+        return datetime.now(ZoneInfo(tz_name))
+    except (ZoneInfoNotFoundError, Exception):
+        return None
+
+
+def _within_window(now_local: datetime, hhmm: str, minutes: int = 6) -> bool:
+    """True when the local clock is within `minutes` minutes AFTER hhmm."""
+    try:
+        h, m = hhmm.split(":")
+        target = now_local.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+    except Exception:
+        return False
+    delta = (now_local - target).total_seconds()
+    return 0 <= delta < minutes * 60
+
+
+async def _build_morning_briefing(user: dict) -> str:
+    uid = user["user_id"]
+    ctx = country_ctx(user)
+    workers_total = await db.workers.count_documents({"owner_id": uid})
+    projects_total = await db.projects.count_documents({"owner_id": uid})
+    # Pending compliance within 14 days.
+    today = date.today()
+    horizon = (today + timedelta(days=14)).isoformat()
+    comp_upcoming = await db.compliance.count_documents({
+        "owner_id": uid, "status": {"$ne": "done"},
+        "due_date": {"$gte": today.isoformat(), "$lte": horizon},
+    })
+    # Pending settlements = total balance owed to workers (accrued - paid - adv - deduct).
+    txns = await db.transactions.find({"owner_id": uid}, {"_id": 0, "type": 1, "amount": 1}).to_list(20000)
+    summary = ledger_summary(txns)
+    pending = max(0, summary["balance"])
+    day_name = today.strftime("%A, %d %b")
+    lines = [
+        f"☀️ <b>Good morning{', ' + user.get('name') if user.get('name') else ''}</b>",
+        f"<i>{day_name}</i>",
+        "",
+        f"👷 {workers_total} worker{'' if workers_total == 1 else 's'} across {projects_total} project{'' if projects_total == 1 else 's'}",
+        f"⏳ {comp_upcoming} compliance deadline{'' if comp_upcoming == 1 else 's'} in the next 14 days",
+        f"💰 {money_str(pending, user)} pending settlements to workers",
+    ]
+    lines.append("")
+    lines.append("Send <b>/report</b> for today's site briefing, or forward a receipt/photo any time.")
+    return "\n".join(lines)
+
+
+async def _build_compliance_pings(user: dict, now_local: datetime) -> List[tuple[str, str]]:
+    """Returns [(ping_key, message)] for each compliance item hitting the D-3/D-1/D-0 window today."""
+    uid = user["user_id"]
+    today = now_local.date().isoformat()
+    d1 = (now_local.date() + timedelta(days=1)).isoformat()
+    d3 = (now_local.date() + timedelta(days=3)).isoformat()
+    out = []
+    cursor = db.compliance.find({
+        "owner_id": uid,
+        "status": {"$ne": "done"},
+        "due_date": {"$in": [today, d1, d3]},
+    }, {"_id": 0})
+    async for item in cursor:
+        due = item.get("due_date")
+        if due == today:
+            urgency, emoji = "TODAY", "🚨"
+        elif due == d1:
+            urgency, emoji = "tomorrow", "⚠️"
+        else:
+            urgency, emoji = "in 3 days", "🔔"
+        ping_key = f"compliance:{item['id']}:{due}"
+        msg = (
+            f"{emoji} <b>Compliance due {urgency}</b>\n"
+            f"<b>{item.get('title') or 'Untitled'}</b>"
+            + (f"\nCategory: {item.get('category')}" if item.get("category") else "")
+            + f"\nDue: <b>{due}</b>"
+            + (f"\n<i>{item.get('notes')}</i>" if item.get("notes") else "")
+        )
+        out.append((ping_key, msg))
+    return out
+
+
+async def _build_payroll_reminder(user: dict) -> Optional[str]:
+    uid = user["user_id"]
+    workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
+    if not workers:
+        return None
+    txns = await db.transactions.find({"owner_id": uid}, {"_id": 0}).to_list(20000)
+    txns_by_worker: Dict[str, list] = {}
+    for t in txns:
+        txns_by_worker.setdefault(t.get("worker_id"), []).append(t)
+    total_pending = 0.0
+    top_lines: List[tuple[str, float]] = []
+    for w in workers:
+        s = ledger_summary(txns_by_worker.get(w["id"], []))
+        if s["balance"] > 0:
+            total_pending += s["balance"]
+            top_lines.append((w.get("name") or "Worker", s["balance"]))
+    if total_pending <= 0:
+        return None
+    top_lines.sort(key=lambda kv: -kv[1])
+    top = top_lines[:5]
+    lines = [
+        "💸 <b>Payroll dues reminder</b>",
+        f"Total pending: <b>{money_str(total_pending, user)}</b> across {len(top_lines)} worker{'' if len(top_lines) == 1 else 's'}",
+        "",
+        "<b>Top balances:</b>",
+    ]
+    for name, amt in top:
+        lines.append(f"• {name} — {money_str(amt, user)}")
+    if len(top_lines) > len(top):
+        lines.append(f"…and {len(top_lines) - len(top)} more.")
+    lines.append("\nSend <b>/pay Ramesh 8000</b> or open the Payroll page to settle.")
+    return "\n".join(lines)
+
+
+async def _send_ping(user: dict, ping_type: str, message: str, dedup_key: str):
+    """Send `message` via Telegram and log to db.ping_log. Also localises to user's language."""
+    chat_id = user.get("telegram_chat_id")
+    if not chat_id:
+        return
+    try:
+        # Propagate user's language so tg_send auto-translates long messages.
+        token = _TG_USER_LANG.set(user.get("language") or "en")
+        try:
+            await tg_send(int(chat_id), message)
+        finally:
+            _TG_USER_LANG.reset(token)
+        await _mark_ping_sent(user["user_id"], ping_type, dedup_key)
+    except Exception as e:
+        logger.warning(f"ping {ping_type} to {user['user_id']} failed: {e}")
+
+
+async def _run_pings_for_user(user: dict, now_utc: datetime):
+    prefs = _notifications_for(user)
+    tz_name = prefs["timezone"]
+    now_local = _localtime_now(tz_name)
+    if not now_local:
+        return
+    day_key = now_local.date().isoformat()
+
+    # Morning briefing
+    mb = prefs.get("morning_briefing") or {}
+    if mb.get("enabled") and _within_window(now_local, mb.get("time") or "08:00"):
+        if not await _ping_already_sent(user["user_id"], "morning_briefing", day_key):
+            msg = await _build_morning_briefing(user)
+            await _send_ping(user, "morning_briefing", msg, day_key)
+
+    # Compliance alerts (D-3, D-1, D-0). Only fire once per (item, due_date).
+    ca = prefs.get("compliance_alerts") or {}
+    if ca.get("enabled"):
+        # Fire once per day, at ~09:00 local time (same window logic).
+        if _within_window(now_local, "09:00"):
+            pings = await _build_compliance_pings(user, now_local)
+            for ping_key, message in pings:
+                if not await _ping_already_sent(user["user_id"], "compliance_alerts", f"{day_key}:{ping_key}"):
+                    await _send_ping(user, "compliance_alerts", message, f"{day_key}:{ping_key}")
+
+    # Payroll reminder — on selected weekdays at scheduled time.
+    pr = prefs.get("payroll_reminder") or {}
+    if pr.get("enabled"):
+        weekday = now_local.isoweekday()  # 1..7
+        days = pr.get("days") or [1, 5]
+        if weekday in days and _within_window(now_local, pr.get("time") or "09:00"):
+            if not await _ping_already_sent(user["user_id"], "payroll_reminder", day_key):
+                msg = await _build_payroll_reminder(user)
+                if msg:
+                    await _send_ping(user, "payroll_reminder", msg, day_key)
+
+
+_PING_LOOP_INTERVAL_SEC = 300  # 5 minutes
+_PING_TASK: Optional[asyncio.Task] = None
+
+
+async def _ping_scheduler_loop():
+    logger.info("Telegram ping scheduler started (interval=%ss)", _PING_LOOP_INTERVAL_SEC)
+    while True:
+        try:
+            if _tg_configured():
+                # Only process users who linked Telegram — cheap indexed filter.
+                cursor = db.users.find({"telegram_chat_id": {"$exists": True, "$ne": None}}, {"_id": 0})
+                async for user in cursor:
+                    try:
+                        await _run_pings_for_user(user, datetime.now(timezone.utc))
+                    except Exception as e:
+                        logger.warning(f"ping run for {user.get('user_id')} failed: {e}")
+        except Exception as e:
+            logger.warning(f"ping loop iteration failed: {e}")
+        await asyncio.sleep(_PING_LOOP_INTERVAL_SEC)
+
+
 
 @api.get("/")
 async def root():
@@ -3106,3 +3409,12 @@ async def startup():
         logger.info("Object storage initialized")
     except Exception as e:
         logger.error(f"Storage init failed (will retry on first use): {e}")
+    # Dedup index for ping_log so we never send the same ping twice on retry.
+    try:
+        await db.ping_log.create_index([("user_id", 1), ("type", 1), ("day", 1)], unique=True)
+    except Exception as e:
+        logger.warning(f"ping_log index create failed: {e}")
+    # Kick off the proactive Telegram ping scheduler.
+    global _PING_TASK
+    if _PING_TASK is None or _PING_TASK.done():
+        _PING_TASK = asyncio.create_task(_ping_scheduler_loop())

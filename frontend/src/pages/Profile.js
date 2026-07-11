@@ -6,6 +6,7 @@ import { CheckCircle, WarningCircle, FloppyDisk, PencilSimple, Translate } from 
 import { COUNTRIES } from "@/lib/country";
 import { useI18n, LANGUAGES } from "@/lib/i18n";
 import TelegramConnect from "@/components/TelegramConnect";
+import TelegramNotifications from "@/components/TelegramNotifications";
 import PhoneVerify from "@/components/PhoneVerify";
 
 const ROLES = ["Contractor", "Builder / Developer", "MEP", "Civil", "Interiors / Fit-out", "Facility Maintenance", "Other"];
@@ -269,6 +270,7 @@ export default function Profile() {
 
       <PhoneVerify />
       <TelegramConnect />
+      <TelegramNotifications />
     </div>
   );
 }

@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 27 (Proactive Telegram pings, tg_send language routing, Expenses full-text search). Backend: 15/17 pytest cases pass. Two real bugs found: (1) GET /api/expenses?limit=0 does NOT clamp up to 1 — returns limit=500 due to `int(limit or 500)` idiom treating 0 as falsy; (2) _send_ping does NOT dedupe when called twice with the same dedup_key — tg_send is invoked before _mark_ping_sent and _send_ping has no _ping_already_sent guard of its own (dedup lives only in _run_pings_for_user). Everything else (GET/PUT prefs shape, partial-patch preservation, invalid tz→400, invalid time→400, days cleaning [0,8,'a',3,3,'5',7] → [3,5,7], legacy /api/notifications regression, expenses case-insensitive + regex escape + AND with category, ping helper builders, tg_send language routing incl. Hindi Devanagari translation of long strings and English pass-through of short strings) passes. Frontend: /profile ‘Proactive Telegram pings’ section renders correctly, default Asia/Kolkata, toggles fire PUT immediately, payroll enable reveals day buttons, day-3 click persists, toast fires.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/expenses", "issue": "limit=0 is not clamped up to 1 (spec: [1,2000]). Code at server.py:2764 does `max(1, min(int(limit or 500), 2000))` — the `or 500` idiom treats 0 as falsy so limit=0 becomes 500 instead of 1. Fix: `raw = 500 if limit is None else int(limit); limit = max(1, min(raw, 2000))`.", "priority": "MEDIUM"},
+      {"endpoint": "_send_ping (helper)", "issue": "Calling _send_ping twice with the same (user_id, type, dedup_key) sends the Telegram message TWICE. tg_send runs before _mark_ping_sent, and _send_ping has no _ping_already_sent guard — dedup only exists in _run_pings_for_user. If retries ever hit _send_ping directly (or the scheduler ticks overlap), users get duplicate pings. Fix: at the top of _send_ping add `if await _ping_already_sent(user['user_id'], ping_type, dedup_key): return` (and rely on the unique index for the tiny race window).", "priority": "MEDIUM"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration27_pings_search_lang.py",
+    "/app/test_reports/pytest/iteration27_results.xml"
+  ],
+  "action_items": [
+    "Fix list_expenses limit-clamping: `limit=0` should clamp to 1 (currently returns 500).",
+    "Fix _send_ping dedup: add pre-check via _ping_already_sent so back-to-back invocations with the same dedup_key don't double-send."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 3421 lines — repeat of iter26 comment; split into routers (telegram_pings.py, expenses.py, ...) is overdue.",
+    "PUT /api/telegram/notifications validation: `re.match(r'^([01]\\d|2[0-3]):[0-5]\\d$', t)` correctly rejects '25:99' and '8:00' — good. But the `days` cleaning silently drops invalid values instead of erroring; consider surfacing a 400 if the caller sent garbage, to help debugging.",
+    "_send_ping catches Exception broadly and swallows — if tg_send fails, the dedup log entry is NOT written, so next scheduler tick will retry. That's arguably correct, but pair it with the missing pre-check (see action item) so double-fires are actually prevented.",
+    "TelegramNotifications.js line 94–107 fires a PUT on every keystroke of time inputs. Debouncing is a listed TODO; recommend 400 ms debounce to reduce write amplification (10+ PUTs while typing 07:30 today)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration27_pings_search_lang.py (new)"
+  ],
+  "success_rate": {"backend": "88% (15/17 new; both failures are the two real bugs above, not test issues)", "frontend": "100% (all critical flows verified)"},
+  "test_credentials": "Bearer test_session_karya1 (user test-user-karya1, DB karya_db_v2). No new permanent seed changes; test suite briefly writes+cleans a TEST_DEDUP ping_log row.",
+  "seed_data_creation": "None persistent. Tests toggle notification prefs then restore to morning_briefing.time=07:30, payroll_reminder.days=[1,5].",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New endpoints GET/PUT /api/telegram/notifications (prefs), legacy /api/notifications untouched. Ping helpers importable from server module: _build_morning_briefing, _build_compliance_pings, _build_payroll_reminder, _send_ping. Monkeypatch server.tg_api to a capturing async coroutine for send-side tests. Use server._TG_USER_LANG.set('hi'/'en')/reset(token) to simulate user language. Frontend testids used: telegram-notifications, tg-timezone, pref-morning, pref-morning-switch, pref-morning-time, pref-compliance-switch, pref-payroll-switch, pref-payroll-time, pref-payroll-day-1..7. Do NOT wait for the in-process ping scheduler loop.",
+  "rca of the issue": "Bug 1 (limit=0): `int(limit or 500)` — Python treats 0 as falsy, so `0 or 500` evaluates to 500. Repro: `GET /api/expenses?limit=0` returns `limit: 500` instead of the spec'd `1`. Fix pattern: differentiate None vs 0 explicitly. Bug 2 (double-send): _send_ping code path (server.py:3292-3306) executes `await tg_send(...)` first, then `_mark_ping_sent` — no guard checks the log before sending. Repro: monkeypatch tg_api to capture calls, call _send_ping twice with same (user_id, type, dedup_key) — both send. Mitigation: add `_ping_already_sent` check at top of _send_ping OR move `_mark_ping_sent` into a pre-INSERT with unique-index catch (attempt insert; on DuplicateKeyError, skip send)."
+}
