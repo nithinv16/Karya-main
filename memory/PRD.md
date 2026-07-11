@@ -91,10 +91,36 @@ When a user sends a voice note to the Telegram bot, the bot's replies are now al
 
 22/22 backend tests pass. Regressions across iter 20–24 all green.
 
+## Iteration 26 (2026-07) — Cost Trends & Budget vs Actual
+1. **`GET /api/cost-trends`** — aggregates cost across three streams (expenses, labour wages/bonuses, subcontractor payments/advances/extra_work) into time buckets. Query params: `period` (week/month/quarter/year, default month), `project_id` (optional filter). Returns:
+   - `buckets`: `[{key, label, expenses, labour, subs, total}]` sorted by time.
+   - `projects`: `[{id, name, budget, actual, remaining, percent, expenses, labour, subs, status}]` (status: no_budget | ok <80% | warn 80–100% | over >100%).
+   - `overall`: `{budget, actual, unassigned, percent}` and `has_data` boolean.
+   - Unassigned expenses (no project_id) are called out separately.
+2. **Expenses now project-attributable** — `ExpenseIn` gained `project_id: Optional[str]`; `POST /api/expenses` persists it; Telegram-forwarded receipts default to `None`. Existing expenses continue to work.
+3. **CostTrendsPanel (`/app/frontend/src/components/CostTrendsPanel.js`)** — reusable panel with:
+   - Period toggle (Weekly/Monthly/Quarterly/Yearly) + range toggle (All time / Last 3/6/12) + project filter.
+   - Stacked recharts ComposedChart (Expenses/Labour/Subs) with an optional dashed green `ReferenceLine` for the per-period budget (only shown when a single project is selected).
+   - Horizontal recharts BarChart of Budget vs Actual per project (colours: green ok, amber warn, red over).
+   - Per-project rollup rows with progress bars, remaining/overrun call-outs, and an "Unassigned" card when relevant.
+   - `dense` prop hides the outer title (used inside the Workforce dialog).
+4. **Mounted on `/expenses`** (top of page) with `<CostTrendsPanel />` (All-projects view).
+5. **Per-project modal on Workforce** — every project card has a "View cost trends" button that opens a dialog with `<CostTrendsPanel projectId={p.id} dense />` (title = project name).
+6. **Expense form** — "Attach to project (optional)" select added; row list shows project name for attributed expenses.
+
+Testing (iteration_26.json): 14/14 new backend tests pass, all frontend flows verified, iter25 regression 21/22 (only failure is the intentional Telegram-webhook 503 in preview env).
+
+
+
 ## Backlog / Next
-- P1: Expenses page in web UI (receipts currently visible via Org Memory; db.expenses has structured data)
-- P1: Let user pick project when generating /report from Telegram (currently most-recent project)
-- P2: Telegram notifications push (compliance deadlines, payroll dues)
-- P2: Split server.py into modules (~2545 lines) — Telegram surface (~700 lines) is a good extraction candidate.
-- P2: WhatsApp (Twilio) still inactive — needs real Twilio creds
-- P2: Replace preview-host substring match with dedicated `IS_PREVIEW` env flag (brittle if domain changes)
+- P1: Downloadable PDF Help Center for offline distribution to site supervisors.
+- P1: Expose Karya's grounded Help AI inside `/help` on the Telegram bot (answers in user's language, /start overview).
+- P2: Proactive Telegram pings (compliance deadlines, payroll dues, morning briefings).
+- P2: Split server.py (~3110 lines) into modules — Telegram (~700), Expenses (~60), Cost Trends (~150), Translate/Help (~120), Twilio (~150) are all extraction candidates.
+- P2: Route more Telegram bot replies through the user's saved language (currently replies are English).
+- P2: Server-side full-text search on Expenses once >500 receipts (currently client-side substring).
+- P2: Ask user which project when forwarding a receipt via Telegram (currently attached to no project by default).
+- P2: `limit` param + max-bucket cap on `/api/cost-trends` for accounts with many years of data.
+- P2: Replace preview-host substring match with dedicated `IS_PREVIEW` env flag (brittle if domain changes).
+- P2: WhatsApp (Twilio) still inactive — needs real Twilio creds.
+

@@ -2911,9 +2911,12 @@ async def cost_trends(
         parts = per_project[pid]
         actual = round(parts["expenses"] + parts["labour"] + parts["subs"], 2)
         budget = float(p.get("budget") or 0)
-        pct = round((actual / budget) * 100, 1) if budget > 0 else 0
+        raw_pct = (actual / budget) * 100 if budget > 0 else 0
+        pct = round(raw_pct, 1)
         remaining = round(budget - actual, 2) if budget > 0 else 0
-        status = "no_budget" if budget <= 0 else ("over" if pct > 100 else ("warn" if pct >= 80 else "ok"))
+        # Classify from raw (unrounded) percent so boundary values (e.g. 79.95)
+        # don't flip status because of display rounding.
+        status = "no_budget" if budget <= 0 else ("over" if raw_pct > 100 else ("warn" if raw_pct >= 80 else "ok"))
         project_rows.append({
             "id": pid, "name": p.get("name") or "Untitled",
             "budget": round(budget, 2), "actual": actual, "remaining": remaining, "percent": pct,
