@@ -390,6 +390,26 @@ async def update_profile(body: ProfileIn, user: dict = Depends(get_current_user)
     return updated
 
 
+class LanguageIn(BaseModel):
+    language: str
+
+
+_SUPPORTED_LANGS = {"en", "hi", "ml", "ta", "te"}
+
+
+@api.patch("/auth/profile/language")
+async def update_profile_language(body: LanguageIn, user: dict = Depends(get_current_user)):
+    """Lightweight language-only update (bypasses required ProfileIn fields).
+    Frontend calls this from the Profile language switcher to avoid a 422 on
+    profiles that haven't been fully filled in yet."""
+    lang = (body.language or "").strip().lower()
+    if lang not in _SUPPORTED_LANGS:
+        raise HTTPException(status_code=400, detail=f"Unsupported language '{lang}'. Supported: {sorted(_SUPPORTED_LANGS)}")
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"language": lang}})
+    updated = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return updated
+
+
 # ---------------------------------------------------------------- phone verification (Twilio Verify)
 
 _E164 = re.compile(r"^\+[1-9]\d{7,14}$")
@@ -1478,19 +1498,16 @@ async def _handle_tg_document(chat_id: int, file_id: str, filename: str, mime: s
         )
 
 
-async def _handle_tg_report_command(chat_id: int, user: dict):
-    """Assemble today's WIP into an actual daily report via the existing generator."""
+async def _generate_and_send_report(chat_id: int, user: dict, project: Optional[dict]):
+    """Assemble today's WIP into a real daily report + notify the chat."""
     today = today_str()
     wip = await db.telegram_wip.find_one({"user_id": user["user_id"], "date": today}, {"_id": 0})
     if not wip or (not wip.get("photos") and not wip.get("notes")):
         await tg_send(chat_id, "📝 Nothing in today's draft yet. Send photos or a short voice note describing progress, then /report.")
         return
-    # Guess the project: use user's most recent one if any.
-    project = await db.projects.find_one({"owner_id": user["user_id"]}, sort=[("created_at", -1)])
     project_id = project["id"] if project else None
     project_name = project["name"] if project else ""
     ctx = country_ctx(user)
-    # Assemble via a compact inline prompt (skip routes/reports internals to keep this decoupled).
     sys_prompt = (
         "You write a daily site report for a construction contractor. "
         f"{ctx['context_prompt']} "
@@ -1514,9 +1531,30 @@ async def _handle_tg_report_command(chat_id: int, user: dict):
     await db.telegram_wip.delete_one({"user_id": user["user_id"], "date": today})
     title = content.get("title") or "Daily Report"
     summary_line = (content.get("summary") or "")[:600]
+    project_tag = f" for <b>{project_name}</b>" if project_name else ""
     await tg_send(
         chat_id,
-        f"📋 <b>{title}</b>\n{summary_line}\n\nOpen Karya → Daily Reports to export as PDF/Word/Excel or send on WhatsApp.",
+        f"📋 <b>{title}</b>{project_tag}\n{summary_line}\n\nOpen Karya → Daily Reports to export as PDF/Word/Excel or send on WhatsApp.",
+    )
+
+
+async def _handle_tg_report_command(chat_id: int, user: dict):
+    """
+    /report — if the user has 0 projects, use no project.
+    If exactly 1, use it silently.
+    If 2+, present an inline keyboard so the user picks which project this report is for.
+    """
+    projects = await db.projects.find({"owner_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    if len(projects) <= 1:
+        await _generate_and_send_report(chat_id, user, projects[0] if projects else None)
+        return
+    # Build 1-column inline keyboard of up to 8 most-recent projects + a "no project" fallback.
+    buttons = [[{"text": p["name"][:56], "callback_data": f"report_pick|{p['id']}"}] for p in projects[:8]]
+    buttons.append([{"text": "— No project —", "callback_data": "report_pick|__none__"}])
+    await tg_send(
+        chat_id,
+        "🗂 <b>Which project is today's report for?</b>",
+        reply_markup={"inline_keyboard": buttons},
     )
 
 
@@ -1547,6 +1585,18 @@ async def telegram_webhook(request: Request):
             await tg_send(cq_chat_id, WELCOME_UNLINKED)
             return {"ok": True}
         pending = await _get_pending(user["user_id"])
+        # Handle /report project picker callbacks (no pending required).
+        if data.startswith("report_pick|"):
+            pid = data.split("|", 1)[1]
+            if pid == "__none__":
+                await _generate_and_send_report(cq_chat_id, user, None)
+            else:
+                project = await db.projects.find_one({"owner_id": user["user_id"], "id": pid}, {"_id": 0})
+                if not project:
+                    await tg_send(cq_chat_id, "⚠️ That project no longer exists. Try /report again.")
+                else:
+                    await _generate_and_send_report(cq_chat_id, user, project)
+            return {"ok": True}
         if not pending:
             await tg_send(cq_chat_id, "Nothing pending — send me a photo or document first.")
             return {"ok": True}
@@ -2645,6 +2695,64 @@ async def export_compliance(format: str = "pdf", user: dict = Depends(get_curren
     else:
         out = build_pdf(title, subtitle, [ExportSection(table=rows if len(rows) > 1 else [header, ["No items", "", "", "", ""]])])
     return _export_response(format, out, "Compliance Register")
+
+
+# ---------------------------------------------------------------- expenses
+
+class ExpenseIn(BaseModel):
+    vendor: str = ""
+    date: str = ""
+    amount: float = 0.0
+    currency: str = ""
+    category: str = "other"
+    summary: str = ""
+    items: List[Dict[str, Any]] = []
+
+
+@api.get("/expenses")
+async def list_expenses(user: dict = Depends(get_current_user), q: str = "", category: str = ""):
+    query: Dict[str, Any] = {"owner_id": user["user_id"]}
+    if category:
+        query["category"] = category
+    docs = await db.expenses.find(query, {"_id": 0}).sort("date", -1).to_list(500)
+    if q:
+        needle = q.lower()
+        docs = [d for d in docs if needle in (d.get("vendor", "") + " " + d.get("summary", "")).lower()]
+    ctx = country_ctx(user)
+    total = round(sum(float(d.get("amount") or 0) for d in docs), 2)
+    by_cat: Dict[str, float] = {}
+    for d in docs:
+        by_cat[d.get("category", "other")] = by_cat.get(d.get("category", "other"), 0) + float(d.get("amount") or 0)
+    return {
+        "items": docs,
+        "total": total,
+        "currency": ctx["currency_code"],
+        "by_category": [{"category": k, "amount": round(v, 2)} for k, v in sorted(by_cat.items(), key=lambda kv: -kv[1])],
+    }
+
+
+@api.post("/expenses")
+async def create_expense(body: ExpenseIn, user: dict = Depends(get_current_user)):
+    ctx = country_ctx(user)
+    exp = {
+        "id": new_id(), "owner_id": user["user_id"],
+        "vendor": body.vendor.strip(), "date": body.date or today_str(),
+        "amount": float(body.amount or 0), "currency": (body.currency or ctx["currency_code"]).strip(),
+        "category": body.category or "other", "items": body.items or [],
+        "summary": body.summary.strip(), "attachment": None, "source": "manual",
+        "created_at": now_iso(),
+    }
+    await db.expenses.insert_one({**exp})
+    exp.pop("_id", None)
+    return exp
+
+
+@api.delete("/expenses/{expense_id}")
+async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)):
+    result = await db.expenses.delete_one({"id": expense_id, "owner_id": user["user_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    return {"deleted": True}
 
 
 # ---------------------------------------------------------------- app wiring

@@ -5,6 +5,7 @@ import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Broadcast, Sparkle, Warning, Trash, ArrowsClockwise, ShieldCheck } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import TranslateButton from "@/components/TranslateButton";
 
 const CATS = ["labour", "gst", "safety", "municipal", "tender", "environment"];
 const catTone = (c) => ({ labour: "accent", gst: "warning", safety: "critical", municipal: "neutral", tender: "success", environment: "neutral" }[c] || "neutral");
@@ -126,6 +127,12 @@ export default function BureaucracyFeed() {
                 {it.verified ? <Badge tone="success">Verified source</Badge> : it.url ? <Badge tone="neutral">External</Badge> : null}
               </div>
               <p className="text-sm text-[#3f3f46] mb-4">{it.summary}</p>
+              <div className="-mt-3 mb-3">
+                <TranslateButton
+                  text={`${it.title}\n\n${it.summary}${it.impact ? `\n\nImpact: ${it.impact.impact_summary}${(it.impact.recommended_actions || []).length ? `\n\nActions:\n${(it.impact.recommended_actions || []).map((a) => `- ${a}`).join("\n")}` : ""}` : ""}`}
+                  contextLabel="Regulatory update / news"
+                />
+              </div>
               {it.url && (
                 <a href={it.url} target="_blank" rel="noreferrer" data-testid={`feed-source-${it.id}`} className="text-xs font-semibold text-[#EA580C] hover:underline mb-4 -mt-2 w-fit">Read original source →</a>
               )}

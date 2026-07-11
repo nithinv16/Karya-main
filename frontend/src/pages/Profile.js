@@ -67,23 +67,11 @@ export default function Profile() {
   const pickLanguage = async (code) => {
     setForm((f) => ({ ...f, language: code }));
     setLang(code);
-    if (!user?.name) return; // no persisted profile yet — local switch only
     try {
-      const payload = {
-        name: user.name || "",
-        phone: user.phone || "",
-        company_name: user.company_name || "",
-        address: user.address || "",
-        role: user.role || "",
-        default_client_phone: user.default_client_phone || "",
-        country: user.country || "IN",
-        language: code,
-        ramadan_mode: !!user.ramadan_mode,
-      };
-      const res = await api.put("/auth/profile", payload);
+      const res = await api.patch("/auth/profile/language", { language: code });
       setUser(res.data);
     } catch {
-      // silent — local shell already updated
+      // silent — local shell already updated; retry on next Save
     }
   };
 

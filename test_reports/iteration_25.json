@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 25 backend testing complete: PATCH /auth/profile/language, /api/expenses CRUD (list+search+category+total+by_category+404), Telegram /report project picker (0/1/2+ projects, callback_query for pid, __none__, and deleted-id). 22/22 tests passed. All regressions (insights, translate, help/ask, telegram status/link/code, profile/phone/verify/status) return 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration25_expenses_lang_tgpicker.py",
+    "/app/test_reports/pytest/iteration25.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 2904 lines — exceeds 700-line guideline; should be split (telegram handlers, expenses, translate/help, auth, projects) into separate modules.",
+    "/api/expenses GET filters q client-side after fetching up to 500 docs; fine for now but should push to Mongo $regex/$text as data grows.",
+    "PATCH /auth/profile/language and other endpoints return the raw user doc — consider a UserOut Pydantic model for consistent shape."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration25_expenses_lang_tgpicker.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "not tested (per request)"},
+  "test_credentials": "Bearer test_session_karya1 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created 2 TEST_Project_* rows for QA user during picker tests, cleaned up in fixture teardown. Created + deleted TEST_UltraTech Cement expense. Language reset to 'en' at teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Motor client binds to first event loop it sees; use a module-level persistent loop (see _LOOP in test file) instead of asyncio.run() per call — otherwise second helper call raises 'Event loop is closed'. QA user is `test-user-karya1`, chat_id 999000111, currency INR/country IN."
+}

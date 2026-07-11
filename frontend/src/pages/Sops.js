@@ -5,6 +5,7 @@ import { PageHeader, Badge, Spinner } from "@/components/ui-bits";
 import { ListChecks, Sparkle, ShieldWarning, Wrench, CheckCircle, ArrowBendUpRight } from "@phosphor-icons/react";
 import VoiceButton from "@/components/VoiceButton";
 import { FileUpload, Attachment } from "@/components/FileUpload";
+import TranslateButton from "@/components/TranslateButton";
 import { toast } from "sonner";
 
 const CATS = ["general", "concrete", "safety", "electrical", "plumbing", "finishing", "quality"];
@@ -80,6 +81,9 @@ export default function Sops() {
               <Badge tone="accent">{active.category}</Badge>
               <h2 className="font-display font-black text-2xl tracking-tight mt-2">{active.content?.title || active.title}</h2>
               {active.content?.objective && <p className="text-sm text-[#71717A] mt-2">{active.content.objective}</p>}
+              <div className="mt-3">
+                <TranslateButton text={buildSopPlaintext(active)} contextLabel="Construction SOP" />
+              </div>
             </div>
             <div className="p-6 space-y-6 text-sm">
               {active.content?.steps?.length > 0 && (
@@ -110,3 +114,17 @@ const Section = ({ icon: Icon, title, children }) => (
   </div>
 );
 const BulletList = ({ items }) => <ul className="list-disc pl-5 space-y-1 text-[#3f3f46]">{items.map((it, i) => <li key={i}>{it}</li>)}</ul>;
+
+function buildSopPlaintext(s) {
+  const c = s?.content || {};
+  const lines = [];
+  if (c.title || s?.title) lines.push(c.title || s.title);
+  if (c.objective) lines.push("", c.objective);
+  if (c.steps?.length) lines.push("", "Procedure:", ...c.steps.map((t, i) => `${i + 1}. ${t}`));
+  if (c.safety_precautions?.length) lines.push("", "Safety Precautions:", ...c.safety_precautions.map((t) => `- ${t}`));
+  if (c.inspection_points?.length) lines.push("", "Inspection Points:", ...c.inspection_points.map((t) => `- ${t}`));
+  if (c.required_tools?.length) lines.push("", "Required Tools:", ...c.required_tools.map((t) => `- ${t}`));
+  if (c.acceptance_criteria?.length) lines.push("", "Acceptance Criteria:", ...c.acceptance_criteria.map((t) => `- ${t}`));
+  if (c.escalation) lines.push("", "Escalation:", c.escalation);
+  return lines.join("\n").trim();
+}

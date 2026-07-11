@@ -19,6 +19,7 @@ import DailyReports from "@/pages/DailyReports";
 import Onboarding from "@/pages/Onboarding";
 import Profile from "@/pages/Profile";
 import Help from "@/pages/Help";
+import Expenses from "@/pages/Expenses";
 
 function Protected({ children, allowIncomplete = false }) {
   const { user, loading } = useAuth();
@@ -92,6 +93,7 @@ function AppRouter() {
         <Route path="/sops" element={<Sops />} />
         <Route path="/knowledge" element={<Knowledge />} />
         <Route path="/insights" element={<Insights />} />
+        <Route path="/expenses" element={<Expenses />} />
         <Route path="/help" element={<Help />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

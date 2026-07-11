@@ -7,6 +7,7 @@ import VoiceButton from "@/components/VoiceButton";
 import ExportMenu from "@/components/ExportMenu";
 import { ClipboardText, Sparkle, MapPin, Trash, Camera, ListChecks, ShieldWarning, Wrench, CheckCircle, ArrowBendUpRight, UsersThree, PaperPlaneTilt } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import TranslateButton from "@/components/TranslateButton";
 
 export default function DailyReports() {
   const qc = useQueryClient();
@@ -236,6 +237,12 @@ export default function DailyReports() {
               </div>
               <h2 className="font-display font-black text-2xl tracking-tight mt-2">{active.content?.title || "Daily Report"}</h2>
               {active.content?.summary && <p className="text-sm text-[#71717A] mt-2">{active.content.summary}</p>}
+              <div className="mt-3">
+                <TranslateButton
+                  text={buildReportPlaintext(active)}
+                  contextLabel="Construction daily site report"
+                />
+              </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 <ExportMenu
                   endpoint={`/reports/${active.id}/export`}
@@ -327,3 +334,18 @@ const Section = ({ icon: Icon, title, children }) => (
   </div>
 );
 const BulletList = ({ items }) => <ul className="list-disc pl-5 space-y-1 text-[#3f3f46]">{items.map((it, i) => <li key={i}>{it}</li>)}</ul>;
+
+function buildReportPlaintext(r) {
+  const c = r?.content || {};
+  const lines = [];
+  if (c.title) lines.push(c.title);
+  if (c.summary) lines.push("", c.summary);
+  if (c.work_completed?.length) lines.push("", "Work Completed:", ...c.work_completed.map((s, i) => `${i + 1}. ${s}`));
+  if (c.manpower) lines.push("", "Manpower:", c.manpower);
+  if (c.materials_used?.length) lines.push("", "Materials & Equipment:", ...c.materials_used.map((s) => `- ${s}`));
+  if (c.issues_delays?.length) lines.push("", "Issues & Delays:", ...c.issues_delays.map((s) => `- ${s}`));
+  if (c.safety_observations?.length) lines.push("", "Safety:", ...c.safety_observations.map((s) => `- ${s}`));
+  if (c.next_steps?.length) lines.push("", "Next Steps:", ...c.next_steps.map((s) => `- ${s}`));
+  if (r?.notes_text) lines.push("", "Original notes:", r.notes_text);
+  return lines.join("\n").trim();
+}
