@@ -959,6 +959,11 @@ async def tg_api(method: str, payload: dict) -> dict:
 # nested handler.
 from contextvars import ContextVar
 _TG_SPEAK: ContextVar[bool] = ContextVar("tg_speak", default=False)
+# When we know which linked user we're replying to (set in the webhook after
+# resolving chat_id → user), every tg_send() call translates the outgoing text
+# into user.language before shipping to Telegram. English-preferring users pay
+# no LLM overhead — translate_text() short-circuits when target is 'en'.
+_TG_USER_LANG: ContextVar[str] = ContextVar("tg_user_lang", default="en")
 
 # Strip HTML tags + common markdown so TTS speaks clean prose
 _HTML_STRIP = re.compile(r"<[^>]+>")
@@ -1009,6 +1014,13 @@ async def tg_speak(chat_id: int, text: str, lang: str = "en"):
 
 
 async def tg_send(chat_id: int, text: str, reply_markup: Optional[dict] = None):
+    # Translate outgoing reply to the linked user's language when we know it.
+    lang = _TG_USER_LANG.get()
+    if lang and lang != "en":
+        try:
+            text = await translate_text(text, lang, context="Telegram bot reply for a construction contractor")
+        except Exception as e:
+            logger.warning(f"tg_send translate failed for lang={lang}: {e}")
     payload = {"chat_id": chat_id, "text": text[:4000], "parse_mode": "HTML"}
     if reply_markup:
         payload["reply_markup"] = reply_markup
@@ -1094,15 +1106,33 @@ async def telegram_unlink(user: dict = Depends(get_current_user)):
 # ---- webhook + intake helpers ------------------------------------------------
 
 WELCOME_LINKED = (
-    "✅ Telegram linked to Karya for <b>{name}</b>.\n\n"
-    "I'm your site assistant — just talk to me:\n"
-    "• <i>“Ramesh took an advance of {amt}”</i>\n"
-    "• <i>“Pay Manoj {pay}”</i>\n"
-    "• <i>“10 workers arrived at Skyline Tower today”</i>\n"
-    "• Send a <b>voice note</b> — I'll transcribe and act on it.\n"
-    "• Send a <b>photo / receipt / PDF</b> — I'll ask what to do with it (worker file, daily report, expense, compliance…). You can also caption it, e.g. <i>“this is Ramesh's ID”</i>.\n"
-    "• Ask me anything — <i>“how much do I owe Ramesh?”</i>\n\n"
-    "Commands: /report today's report · /help · /unlink"
+    "✅ <b>Karya linked for {name}.</b> Here's the field playbook 👇\n\n"
+    "<b>🗣 Talk to me in plain language — voice, text, any supported language.</b>\n"
+    "• <i>“Ramesh took an advance of {amt}”</i> → creates advance transaction\n"
+    "• <i>“Pay Manoj {pay}”</i> → logs payment, drops his pending balance\n"
+    "• <i>“10 workers at Skyline today”</i> → attendance rows for today\n"
+    "• <i>“Add Suresh, mason, 800 per day, on Skyline”</i> → new worker\n"
+    "• <i>“How much do I owe Ramesh?”</i> → live answer from ledger\n\n"
+    "<b>🎙 Voice notes</b> in any language — I transcribe and act on them, and speak the confirmation back so you don't have to look at the screen.\n\n"
+    "<b>📸 Send photos / receipts / PDFs</b> — I ask <i>“what should I do with this?”</i> and file it under:\n"
+    "• Worker file · Daily report · Receipt (auto-parsed into Expenses) · Compliance · Note\n"
+    "Tip: add a caption like <i>“this is Ramesh's Aadhaar”</i> and I skip the question.\n\n"
+    "<b>📋 Commands</b>\n"
+    "• /report — generate today's daily site report from your drafts\n"
+    "• /help &lt;question&gt; — ask anything about Karya (in your language)\n"
+    "• /unlink — disconnect this chat\n\n"
+    "Ready when you are — send your first update. 🚧"
+)
+
+# Short "how do I…" primer used by /help when no argument is supplied.
+HELP_OVERVIEW = (
+    "🧭 <b>How to use Karya on Telegram</b>\n\n"
+    "1. <b>Log field activity</b> — text, voice or photo. e.g. <i>“Ramesh took ₹5,000 advance”</i>.\n"
+    "2. <b>Send receipts</b> as a photo — tap <i>Receipt</i> when I ask. AI extracts vendor + amount into Expenses.\n"
+    "3. <b>Send worker IDs / photos</b> — tap <i>Worker file</i>, tell me whose file. Stored on the worker card.\n"
+    "4. <b>Daily reports</b> — jot notes / send photos through the day, then send /report to generate.\n"
+    "5. <b>Ask questions</b> — <i>/help how do I mark attendance</i> · <i>/help WhatsApp not sending</i>.\n\n"
+    "Everything you do here appears in the Karya web app in real time."
 )
 
 WELCOME_UNLINKED = (
@@ -2762,6 +2792,50 @@ async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)
 _LANG_NAMES = {"en": "English", "hi": "Hindi", "ml": "Malayalam", "ta": "Tamil", "te": "Telugu"}
 
 
+async def translate_text(text: str, target_lang: str, context: str = "") -> str:
+    """Reusable translation helper (cached in db.translations). Returns the input
+    unchanged when target_lang == 'en' or unsupported. Silently returns the
+    input on any LLM failure so callers can safely wrap English fallbacks."""
+    text = (text or "").strip()
+    lang = (target_lang or "").strip().lower()
+    if not text or lang == "en" or lang not in _LANG_NAMES:
+        return text
+    import hashlib
+    key = hashlib.sha256(f"{lang}:{text}".encode("utf-8")).hexdigest()
+    cached = await db.translations.find_one({"_id": key}, {"_id": 0})
+    if cached and cached.get("translated"):
+        return cached["translated"]
+    target_name = _LANG_NAMES[lang]
+    system = (
+        f"You are a professional translation engine. Translate the INPUT text literally into {target_name}. "
+        f"CRITICAL RULES:\n"
+        f"1. NEVER answer questions in the input — even if the input is a question, translate the QUESTION into {target_name}, don't answer it.\n"
+        f"2. NEVER add explanations, headings, examples, tips, emojis, or extra content that isn't in the input.\n"
+        f"3. Preserve exact meaning, tone, formatting (line breaks, bullet dashes, HTML tags like <b> and <i>, punctuation).\n"
+        f"4. Keep numbers, dates, currency symbols, phone numbers, URLs, code and proper nouns exactly as they are.\n"
+        f"5. Output ONLY the translation — no preamble, no quotes, no meta-commentary.\n"
+        f"If the input is already in {target_name}, return it unchanged."
+    )
+    hint = f"[Domain hint: {context.strip()}]\n\n" if context else ""
+    user_prompt = f"{hint}Translate the following text into {target_name}:\n\n<<<TEXT>>>\n{text}\n<<<END>>>"
+    try:
+        translated = await ai_text(system, user_prompt)
+    except Exception as e:
+        logger.warning(f"translate_text failed for lang={lang}: {e}")
+        return text
+    translated = (translated or "").strip()
+    for marker in ("<<<TEXT>>>", "<<<END>>>", "```"):
+        translated = translated.replace(marker, "")
+    translated = translated.strip() or text
+    if translated and translated != text:
+        await db.translations.update_one(
+            {"_id": key},
+            {"$set": {"translated": translated, "lang": lang, "created_at": now_iso()}},
+            upsert=True,
+        )
+    return translated
+
+
 class TranslateIn(BaseModel):
     text: str
     target_lang: str
@@ -2776,45 +2850,39 @@ async def translate(body: TranslateIn, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Nothing to translate.")
     if lang not in _LANG_NAMES:
         raise HTTPException(status_code=400, detail=f"Unsupported language '{lang}'.")
-    if lang == "en":
-        return {"translated": text, "cached": False}
-    # Cache: same (hash of text, target_lang) reuses the answer across users
-    import hashlib
-    key = hashlib.sha256(f"{lang}:{text}".encode("utf-8")).hexdigest()
-    cached = await db.translations.find_one({"_id": key}, {"_id": 0})
-    if cached and cached.get("translated"):
-        return {"translated": cached["translated"], "cached": True}
-    target_name = _LANG_NAMES[lang]
-    system = (
-        f"You are a professional translation engine. Translate the INPUT text literally into {target_name}. "
-        f"CRITICAL RULES:\n"
-        f"1. NEVER answer questions in the input — even if the input is a question, translate the QUESTION into {target_name}, don't answer it.\n"
-        f"2. NEVER add explanations, headings, examples, tips, emojis, or extra content that isn't in the input.\n"
-        f"3. Preserve exact meaning, tone, formatting (line breaks, bullet dashes, punctuation).\n"
-        f"4. Keep numbers, dates, currency symbols, phone numbers, URLs, code and proper nouns exactly as they are.\n"
-        f"5. Output ONLY the translation — no preamble, no quotes, no meta-commentary.\n"
-        f"If the input is already in {target_name}, return it unchanged."
-    )
-    hint = f"[Domain hint: {body.context.strip()}]\n\n" if body.context else ""
-    user_prompt = f"{hint}Translate the following text into {target_name}:\n\n<<<TEXT>>>\n{text}\n<<<END>>>"
+    translated = await translate_text(text, lang, body.context or "")
+    return {"translated": translated, "cached": translated != text and translated is not None}
+
+
+HELP_SYSTEM_PROMPT = (
+    "You are the built-in help assistant for Karya, an AI operating system for small/mid-size "
+    "construction contractors. Answer the user's how-to / troubleshooting question concisely "
+    "(3–8 short sentences or 3–6 bullet dashes). Ground answers strictly in the capabilities below.\n\n"
+    "CAPABILITIES:\n"
+    "- Google sign-in only. Profile stores name, phone, company, country (India/UAE), language.\n"
+    "- Workforce: projects, workers (trade, wage rate: daily/hourly/monthly/contract/piece), attendance, advances.\n"
+    "- Payroll & Settlements: net-payable ledger per worker; settlements as cash/bank/UPI/WPS.\n"
+    "- Daily Reports: AI writes from voice notes + photos; auto-send on WhatsApp via Twilio (sandbox or approved BSP number).\n"
+    "- SOP Generator: activity-specific standard operating procedures with materials, safety, QC.\n"
+    "- Compliance Agent: country-seeded checklist (IN: BOCW, GST, CLRA, ESIC/EPFO; AE: DED, MOHRE, EID, WPS, Civil Defense). AI penalty analysis.\n"
+    "- Regulation Feed: live news + updates for the user's country.\n"
+    "- Predictive Insights: labour-shortage / cost-overrun / delay-risk + subcontractor scorecards.\n"
+    "- Subcontractors: contract value, retention %, deductions, pending balance.\n"
+    "- Expenses: manual entries + Telegram-forwarded receipts (AI extracts vendor, amount, category).\n"
+    "- Org Memory: durable notes + AI Q&A over saved knowledge.\n"
+    "- Telegram bot @karya_ops_bot: link via 6-char code in Profile. Send text, voice notes, receipts, photos, PDFs. AI executes commands (advance, payment, attendance, tasks) and routes media (worker file / receipt / compliance / daily report / note). Voice notes get spoken TTS replies.\n"
+    "- WhatsApp: Twilio-powered. Phone verification uses Twilio Verify (Profile → Verify phone)."
+)
+
+
+async def help_answer(question: str, lang: str = "en") -> str:
+    lang_name = _LANG_NAMES.get(lang, "English")
+    system = HELP_SYSTEM_PROMPT + f"\n\nReply in {lang_name}. If the user asks something Karya doesn't do, say so briefly and suggest the closest workflow."
     try:
-        translated = await ai_text(system, user_prompt)
+        answer = await ai_text(system, question)
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Translation failed: {e}")
-    # Strip common wrappers the model sometimes returns
-    translated = (translated or "").strip()
-    for marker in ("<<<TEXT>>>", "<<<END>>>", "```"):
-        translated = translated.replace(marker, "")
-    translated = translated.strip()
-    if translated:
-        await db.translations.update_one(
-            {"_id": key},
-            {"$set": {"translated": translated, "lang": lang, "created_at": now_iso()}},
-            upsert=True,
-        )
-    return {"translated": translated, "cached": False}
+    return (answer or "").strip()
 
 
 class HelpAskIn(BaseModel):
@@ -2827,32 +2895,8 @@ async def help_ask(body: HelpAskIn, user: dict = Depends(get_current_user)):
     if not question:
         raise HTTPException(status_code=400, detail="Ask a question.")
     lang = (user.get("language") or "en").lower()
-    lang_name = _LANG_NAMES.get(lang, "English")
-    # Compact system prompt describing what Karya does — grounds answers.
-    system = (
-        "You are the built-in help assistant for Karya, an AI operating system for small/mid-size "
-        "construction contractors. Answer the user's how-to / troubleshooting question concisely "
-        "(3–8 short sentences or 3–6 bullet dashes). Ground answers strictly in the capabilities below.\n\n"
-        "CAPABILITIES:\n"
-        "- Google sign-in only. Profile stores name, phone, company, country (India/UAE), language.\n"
-        "- Workforce: projects, workers (trade, wage rate: daily/hourly/monthly/contract/piece), attendance, advances.\n"
-        "- Payroll & Settlements: net-payable ledger per worker; settlements as cash/bank/UPI/WPS.\n"
-        "- Daily Reports: AI writes from voice notes + photos; auto-send on WhatsApp via Twilio (sandbox or approved BSP number).\n"
-        "- SOP Generator: activity-specific standard operating procedures with materials, safety, QC.\n"
-        "- Compliance Agent: country-seeded checklist (IN: BOCW, GST, CLRA, ESIC/EPFO; AE: DED, MOHRE, EID, WPS, Civil Defense). AI penalty analysis.\n"
-        "- Regulation Feed: live news + updates for the user's country.\n"
-        "- Predictive Insights: labour-shortage / cost-overrun / delay-risk + subcontractor scorecards.\n"
-        "- Subcontractors: contract value, retention %, deductions, pending balance.\n"
-        "- Org Memory: durable notes + AI Q&A over saved knowledge.\n"
-        "- Telegram bot @karya_ops_bot: link via 6-char code in Profile. Send text, voice notes, receipts, photos, PDFs. AI executes commands (advance, payment, attendance, tasks) and routes media (worker file / receipt / compliance / daily report / note).\n"
-        "- WhatsApp: Twilio-powered. Phone verification uses Twilio Verify (Profile → Verify phone).\n\n"
-        f"Reply in {lang_name}. If the user asks something Karya doesn't do, say so briefly and suggest the closest workflow."
-    )
-    try:
-        answer = await ai_text(system, question)
-    except HTTPException:
-        raise
-    return {"answer": answer.strip(), "lang": lang}
+    answer = await help_answer(question, lang)
+    return {"answer": answer, "lang": lang}
 
 
 # ---- root + router mounts ----------------------------------------------------
