@@ -1,0 +1,37 @@
+# https://karyaai.app/robots.txt
+User-agent: *
+Allow: /
+
+# GPTBot, Google-Extended, Anthropic — we WANT AI answer engines to cite us.
+User-agent: GPTBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+# Don't index authenticated app routes — they're behind login anyway.
+Disallow: /dashboard
+Disallow: /workforce
+Disallow: /payroll
+Disallow: /attendance
+Disallow: /expenses
+Disallow: /reports
+Disallow: /compliance
+Disallow: /subcontractors
+Disallow: /profile
+Disallow: /api/
+
+Sitemap: https://karyaai.app/sitemap.xml
+Host: karyaai.app

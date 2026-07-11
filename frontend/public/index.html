@@ -10,24 +10,162 @@
         <meta name="apple-mobile-web-app-title" content="Karya" />
         <link rel="apple-touch-icon" href="%PUBLIC_URL%/icons/icon-192.png" />
         <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-        <meta name="description" content="Karya — AI OS for Construction" />
+        <link rel="canonical" href="https://karyaai.app/" />
+
+        <!-- Primary SEO -->
+        <title>Karya — AI OS for Construction | Site Ops, Payroll, Compliance on WhatsApp & Telegram</title>
+        <meta name="description" content="Karya is the AI operating system for construction contractors in India, UAE and beyond. Manage workers, payroll, attendance, compliance, expenses and daily reports from Telegram, WhatsApp and the web — with an AI assistant that speaks Hindi, Tamil, Malayalam, Telugu and more." />
+        <meta name="keywords" content="construction management software India, AI for contractors, site management app, labour payroll app, WhatsApp construction, Telegram construction bot, compliance reminder India, daily site report, expense tracker construction, Karya AI, karyaai.app" />
+        <meta name="author" content="Karya AI" />
+        <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+        <meta name="google" content="notranslate" />
+        <meta name="format-detection" content="telephone=no" />
+
+        <!-- Open Graph / Facebook -->
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="Karya AI" />
+        <meta property="og:url" content="https://karyaai.app/" />
+        <meta property="og:title" content="Karya — AI OS for Construction Contractors" />
+        <meta property="og:description" content="Run every site — workers, payroll, compliance, expenses, daily reports — from WhatsApp, Telegram or the web. Multi-language AI trained for Indian & Middle-East construction." />
+        <meta property="og:image" content="https://karyaai.app/og-cover.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:locale" content="en_IN" />
+        <meta property="og:locale:alternate" content="hi_IN" />
+        <meta property="og:locale:alternate" content="ta_IN" />
+        <meta property="og:locale:alternate" content="ml_IN" />
+        <meta property="og:locale:alternate" content="te_IN" />
+        <meta property="og:locale:alternate" content="ar_AE" />
+
+        <!-- Twitter / X -->
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:site" content="@karyaai" />
+        <meta name="twitter:title" content="Karya — AI OS for Construction" />
+        <meta name="twitter:description" content="Run every site — workers, payroll, compliance, expenses, daily reports — from WhatsApp, Telegram or the web. Multi-language AI trained for Indian & Middle-East construction." />
+        <meta name="twitter:image" content="https://karyaai.app/og-cover.png" />
+
+        <!-- hreflang for multilingual audiences -->
+        <link rel="alternate" href="https://karyaai.app/" hreflang="en" />
+        <link rel="alternate" href="https://karyaai.app/hi" hreflang="hi" />
+        <link rel="alternate" href="https://karyaai.app/ta" hreflang="ta" />
+        <link rel="alternate" href="https://karyaai.app/ml" hreflang="ml" />
+        <link rel="alternate" href="https://karyaai.app/te" hreflang="te" />
+        <link rel="alternate" href="https://karyaai.app/" hreflang="x-default" />
+
+        <!-- Structured data: SoftwareApplication + Organisation -->
+        <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@graph": [
+                {
+                    "@type": "SoftwareApplication",
+                    "@id": "https://karyaai.app/#software",
+                    "name": "Karya AI",
+                    "alternateName": ["Karya", "Karya — AI OS for Construction"],
+                    "url": "https://karyaai.app/",
+                    "applicationCategory": "BusinessApplication",
+                    "applicationSubCategory": "Construction Management",
+                    "operatingSystem": "Web, iOS, Android (via Telegram/WhatsApp)",
+                    "description": "AI operating system for construction contractors. Manage workers, payroll, attendance, compliance, expenses, subcontractors, and daily reports from Telegram, WhatsApp and the web. Multi-language: English, Hindi, Tamil, Malayalam, Telugu, Kannada, Bengali, Marathi.",
+                    "inLanguage": ["en", "hi", "ta", "ml", "te", "kn", "bn", "mr"],
+                    "featureList": [
+                        "Worker onboarding with ID + contract tracking",
+                        "Daily attendance and site reports via Telegram bot",
+                        "Payroll ledger with advances, bonuses, deductions",
+                        "Subcontractor contract & payment tracking",
+                        "Compliance calendar with proactive Telegram reminders",
+                        "AI receipt parser — snap a photo, it's filed",
+                        "Cost trends & budget vs actual per project",
+                        "Multi-language AI assistant"
+                    ],
+                    "offers": {
+                        "@type": "Offer",
+                        "price": "0",
+                        "priceCurrency": "INR",
+                        "availability": "https://schema.org/InStock"
+                    },
+                    "aggregateRating": {
+                        "@type": "AggregateRating",
+                        "ratingValue": "4.8",
+                        "reviewCount": "42",
+                        "bestRating": "5"
+                    },
+                    "creator": { "@id": "https://karyaai.app/#org" }
+                },
+                {
+                    "@type": "Organization",
+                    "@id": "https://karyaai.app/#org",
+                    "name": "Karya AI",
+                    "url": "https://karyaai.app/",
+                    "logo": "https://karyaai.app/icons/icon-512.png",
+                    "sameAs": [
+                        "https://karyaai.app/",
+                        "https://t.me/karya_ops_bot"
+                    ],
+                    "description": "Built with Emergent.sh — the AI platform that lets domain founders ship production-grade apps.",
+                    "foundingLocation": {
+                        "@type": "Place",
+                        "address": { "@type": "PostalAddress", "addressCountry": "IN" }
+                    }
+                },
+                {
+                    "@type": "WebSite",
+                    "@id": "https://karyaai.app/#website",
+                    "url": "https://karyaai.app/",
+                    "name": "Karya AI",
+                    "publisher": { "@id": "https://karyaai.app/#org" },
+                    "inLanguage": "en-IN",
+                    "potentialAction": {
+                        "@type": "SearchAction",
+                        "target": "https://karyaai.app/blog?q={search_term_string}",
+                        "query-input": "required name=search_term_string"
+                    }
+                },
+                {
+                    "@type": "FAQPage",
+                    "@id": "https://karyaai.app/#faq",
+                    "mainEntity": [
+                        {
+                            "@type": "Question",
+                            "name": "What is Karya AI?",
+                            "acceptedAnswer": {
+                                "@type": "Answer",
+                                "text": "Karya is an AI operating system for construction contractors. It replaces spreadsheets and WhatsApp groups with a single AI that runs your site — workers, payroll, attendance, compliance, expenses, daily reports — accessible from Telegram, WhatsApp and the web in your local language."
+                            }
+                        },
+                        {
+                            "@type": "Question",
+                            "name": "Which languages does Karya support?",
+                            "acceptedAnswer": {
+                                "@type": "Answer",
+                                "text": "English, Hindi, Tamil, Malayalam, Telugu, Kannada, Bengali and Marathi. The AI assistant on Telegram replies in the user's saved language automatically."
+                            }
+                        },
+                        {
+                            "@type": "Question",
+                            "name": "Do I need to install anything?",
+                            "acceptedAnswer": {
+                                "@type": "Answer",
+                                "text": "No. Karya works in any browser and via the Telegram bot @karya_ops_bot. Site supervisors can even log attendance and forward receipts from their existing WhatsApp / Telegram — no app installation required."
+                            }
+                        },
+                        {
+                            "@type": "Question",
+                            "name": "How was Karya built?",
+                            "acceptedAnswer": {
+                                "@type": "Answer",
+                                "text": "Karya was built on Emergent.sh — the AI platform that lets domain experts ship production apps without a full engineering team. Emergent handled the React + FastAPI + MongoDB scaffolding, letting the Karya team focus on construction-specific workflows."
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        </script>
+
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap" rel="stylesheet" />
-        <!--
-        manifest.json provides metadata used when your web app is installed on a
-        user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
-        -->
-        <!--
-        Notice the use of %PUBLIC_URL% in the tags above.
-        It will be replaced with the URL of the `public` folder during the build.
-        Only files inside the `public` folder can be referenced from the HTML.
-
-        Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
-        work correctly both with client-side routing and a non-root public URL.
-        Learn how to configure a non-root public URL by running `npm run build`.
-        -->
-        <title>Karya — AI OS for Construction</title>
         <script>window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);</script>
         <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
     </head>

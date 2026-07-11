@@ -8,7 +8,11 @@ import { Receipt, MagnifyingGlass, Plus, Trash, Calendar, Storefront, Tag, Spark
 import { toast } from "sonner";
 import CostTrendsPanel from "@/components/CostTrendsPanel";
 
-const CATS = ["cement", "steel", "aggregate", "tools", "fuel", "transport", "labour_petty", "food", "office", "other"];
+const CATS = [
+  "cement", "steel", "aggregate", "bricks", "sand", "hardware", "electrical", "plumbing", "paint",
+  "tools", "safety", "scaffolding", "formwork", "fuel", "transport", "machinery_rent",
+  "labour_petty", "subcontractor", "food", "water", "utilities", "office", "permits", "insurance", "other",
+];
 
 const inputCls = "w-full border-2 border-[#E4E4E7] focus:border-[#EA580C] outline-none px-3 py-2.5 text-sm transition-colors duration-200 bg-white";
 
@@ -21,8 +25,10 @@ export default function Expenses() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     vendor: "", date: new Date().toISOString().slice(0, 10),
-    amount: "", category: "other", summary: "", project_id: "",
+    amount: "", category: "other", customCategory: "", summary: "", project_id: "",
   });
+  const [receiptBusy, setReceiptBusy] = useState(false);
+  const receiptInputRef = React.useRef(null);
 
   const { data: projects } = useQuery({
     queryKey: ["projects"],
@@ -35,10 +41,18 @@ export default function Expenses() {
   });
 
   const create = useMutation({
-    mutationFn: async () => (await api.post("/expenses", { ...form, amount: parseFloat(form.amount || "0"), project_id: form.project_id || null })).data,
+    mutationFn: async () => {
+      // If user picked "other" and typed a custom label, send that as the category.
+      const rawCat = form.category === "other" && form.customCategory.trim()
+        ? form.customCategory.trim().toLowerCase().replace(/\s+/g, "_").slice(0, 40)
+        : form.category;
+      const payload = { ...form, category: rawCat, amount: parseFloat(form.amount || "0"), project_id: form.project_id || null };
+      delete payload.customCategory;
+      return (await api.post("/expenses", payload)).data;
+    },
     onSuccess: () => {
       toast.success("Expense added");
-      setForm({ vendor: "", date: new Date().toISOString().slice(0, 10), amount: "", category: "other", summary: "", project_id: "" });
+      setForm({ vendor: "", date: new Date().toISOString().slice(0, 10), amount: "", category: "other", customCategory: "", summary: "", project_id: "" });
       setShowForm(false);
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["cost-trends"] });
@@ -66,13 +80,58 @@ export default function Expenses() {
         title="Expenses & Receipts"
         desc="Every receipt captured via Telegram or added manually — searchable, categorized, and rolled up so you know where the money went."
         action={
-          <button
-            data-testid="add-expense-button"
-            onClick={() => setShowForm((s) => !s)}
-            className="flex items-center gap-2 bg-[#EA580C] text-white px-4 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200"
-          >
-            <Plus size={16} weight="bold" /> Add expense
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={receiptInputRef}
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              data-testid="expense-receipt-input"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                setReceiptBusy(true);
+                try {
+                  const fd = new FormData();
+                  fd.append("file", f);
+                  const res = await api.post("/expenses/upload-receipt", fd, {
+                    headers: { "Content-Type": "multipart/form-data" },
+                    timeout: 60000,
+                  });
+                  const parsedOk = res.data.parsed;
+                  const amt = res.data.expense?.amount || 0;
+                  const vendor = res.data.expense?.vendor || "vendor";
+                  toast.success(parsedOk
+                    ? `Receipt parsed — ${vendor} • ${fmt(amt)}`
+                    : "Receipt saved (couldn't auto-detect amount — please edit).");
+                  qc.invalidateQueries({ queryKey: ["expenses"] });
+                  qc.invalidateQueries({ queryKey: ["cost-trends"] });
+                } catch (err) {
+                  const detail = err?.response?.data?.detail;
+                  toast.error(detail || "Couldn't process that receipt");
+                } finally {
+                  setReceiptBusy(false);
+                  if (receiptInputRef.current) receiptInputRef.current.value = "";
+                }
+              }}
+            />
+            <button
+              data-testid="upload-receipt-button"
+              onClick={() => receiptInputRef.current?.click()}
+              disabled={receiptBusy}
+              className="flex items-center gap-2 border-2 border-[#09090B] px-4 py-2 text-sm font-semibold hover:bg-[#09090B] hover:text-white transition-colors duration-200 disabled:opacity-60"
+            >
+              <Sparkle size={16} weight="fill" />
+              {receiptBusy ? "Parsing…" : "Upload receipt (AI)"}
+            </button>
+            <button
+              data-testid="add-expense-button"
+              onClick={() => setShowForm((s) => !s)}
+              className="flex items-center gap-2 bg-[#EA580C] text-white px-4 py-2.5 text-sm font-semibold hover:bg-[#C2410C] transition-colors duration-200"
+            >
+              <Plus size={16} weight="bold" /> Add expense
+            </button>
+          </div>
         }
       />
 
@@ -84,9 +143,19 @@ export default function Expenses() {
             <input data-testid="expense-date" type="date" className={inputCls} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
             <input data-testid="expense-amount" type="number" step="0.01" className={inputCls} placeholder="Amount" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
             <select data-testid="expense-category" className={inputCls} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-              {CATS.map((c) => <option key={c} value={c}>{c}</option>)}
+              {CATS.map((c) => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
             </select>
           </div>
+          {form.category === "other" && (
+            <input
+              data-testid="expense-custom-category"
+              className={inputCls + " mb-3"}
+              placeholder='Custom category (e.g. "site accommodation" — used to group receipts)'
+              value={form.customCategory}
+              onChange={(e) => setForm({ ...form, customCategory: e.target.value })}
+              maxLength={40}
+            />
+          )}
           {projects && projects.length > 0 && (
             <select
               data-testid="expense-project"

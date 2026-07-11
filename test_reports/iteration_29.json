@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 29 verified: 18/18 backend tests + 2/2 frontend flows PASS. Notif defaults disabled, verify auto-provision, voice/transcribe 400+rate-limit, custom slugified expense category (backend + UI), web receipt upload (400/415/200/429), security headers, CORS via ASGI, payload guard 413, robots/sitemap/JSON-LD, /blog listing + built-with-emergent article. One critical code-level issue surfaced: /api/expenses/upload-receipt returns 502 to the client when the AI parser gives up (e.g., unrecognisable image). Envelope test would-be OK per spec but real users will see a hard error.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/expenses/upload-receipt",
+        "issue": "When ai_json exhausts its 3 retries (any upstream failure — tiny/unreadable image, quota, timeout) it raises HTTPException(502). upload_receipt does `except HTTPException: raise`, so the whole request fails with 502 even though the review spec explicitly says the expense should still be created with a blank vendor. Also breaks the rate-limit UX (user retries, keeps hitting 502). Fix: replace `except HTTPException: raise` with catching HTTPException where detail hints AI/parse and falling through to `parsed = {}` — OR call an internal `_ai_json_safe` that returns {} on failure.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "CORS (infra)",
+        "issue": "Preview ingress overrides `access-control-allow-origin` to `*` for every response, masking the app-level CORS allow-list. The FastAPI middleware is configured correctly (verified in-process via TestClient), but any real-browser check against the preview URL will see `*`. Non-blocking for production karyaai.app if that ingress does not override — please verify prod ingress config."
+      },
+      {
+        "endpoint": "Payload size guard (infra)",
+        "issue": "Preview ingress terminates requests with a bogus Content-Length before hitting FastAPI, so end-to-end 413 cannot be tested via the public URL. Middleware itself works (verified in-process)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration29.py",
+    "/app/test_reports/pytest/iteration29.xml"
+  ],
+  "action_items": [
+    "Fix upload_receipt 502 leak: when AI parsing fails (HTTPException 502 from ai_json), swallow it and create the expense with empty vendor/amount/items so the user still gets a stored receipt attachment. Do NOT swallow the two intentional HTTPExceptions (415 unsupported type, 422 unreadable PDF).",
+    "Verify production ingress (karyaai.app) does NOT rewrite access-control-allow-origin — otherwise the tightened app-level CORS is inert on the public surface."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 3,683 lines — long past the 700-line threshold. Recommend splitting into routers (auth, expenses, telegram, compliance, verify, security_middleware).",
+    "upload_receipt swallows generic Exception but re-raises HTTPException; ai_json raising 502 short-circuits an otherwise-successful upload. This pattern is copy-pasted from the Telegram receipt flow (line 1443 area) which has the same latent issue.",
+    "Rate limiter is in-process only (dict + asyncio.Lock). Fine for single-pod; a comment already flags this. Consider Redis before scaling horizontally."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration29.py (new)"
+  ],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% (2/2 flows)"},
+  "test_credentials": "Bearer test_session_karya1 (user test-user-karya1, DB karya_db_v2). Unchanged.",
+  "seed_data_creation": "None persistent. Tests create+cleanup TEST_CUSTOM_CAT / TEST_UI_ITER29 expenses and one throwaway web-upload receipt (deleted at end).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "CORS + payload-guard cannot be black-box tested against the preview ingress (it strips/rewrites headers). Use starlette TestClient against server.app for those two. For upload-receipt tests, use PIL to draw a real-looking receipt (>= 400x300 with text) — a 1x1 pixel PNG makes OpenAI vision reject the image and expose the 502 bug. Verify SID auto-provisioning already ran; system_config now contains 'twilio_verify_sid'.",
+  "rca of the issue": "upload_receipt (server.py:2910) explicitly re-raises HTTPException on the AI parse step. Since ai_json() at server.py:174 raises HTTPException(502) after 3 retries, any client-side upload whose image the vision model rejects (or upstream is briefly down) fails hard instead of degrading to an unparsed receipt. Reproduction: POST a 1x1 PNG to /api/expenses/upload-receipt → 502 in ~8s (3 gpt-4o attempts). Expected: 200 with empty vendor/amount + expense.attachment.path set."
+}

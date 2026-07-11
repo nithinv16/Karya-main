@@ -8,3 +8,18 @@
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Blog prose — hand-tuned for readability. Keep it self-contained so we
+   don't need @tailwindcss/typography as a dependency. */
+.prose-karya { color: #27272a; font-size: 1.05rem; line-height: 1.75; }
+.prose-karya h2 { font-family: var(--font-display, "Space Grotesk", "Inter", sans-serif); font-weight: 800; font-size: 1.6rem; margin: 2.5rem 0 1rem; letter-spacing: -0.02em; color: #09090B; }
+.prose-karya h3 { font-family: var(--font-display, "Space Grotesk", "Inter", sans-serif); font-weight: 700; font-size: 1.25rem; margin: 1.75rem 0 0.75rem; color: #09090B; }
+.prose-karya p { margin: 1rem 0; }
+.prose-karya ul, .prose-karya ol { margin: 1rem 0; padding-left: 1.25rem; }
+.prose-karya li { margin: 0.5rem 0; }
+.prose-karya ul li { list-style: disc; }
+.prose-karya ol li { list-style: decimal; }
+.prose-karya a { color: #EA580C; text-decoration: underline; text-underline-offset: 3px; }
+.prose-karya a:hover { color: #C2410C; }
+.prose-karya strong { font-weight: 700; color: #09090B; }
+.prose-karya code { background: #F4F4F5; padding: 0.15rem 0.35rem; font-size: 0.9em; border: 1px solid #E4E4E7; font-family: "JetBrains Mono", "Fira Code", monospace; }

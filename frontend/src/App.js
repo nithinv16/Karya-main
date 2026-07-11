@@ -1,6 +1,7 @@
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Toaster } from "sonner";
+import { HelmetProvider } from "react-helmet-async";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { I18nProvider } from "@/lib/i18n";
 import AuthCallback from "@/pages/AuthCallback";
@@ -20,6 +21,7 @@ import Onboarding from "@/pages/Onboarding";
 import Profile from "@/pages/Profile";
 import Help from "@/pages/Help";
 import Expenses from "@/pages/Expenses";
+import { BlogIndex, BlogPost } from "@/pages/Blog";
 
 function Protected({ children, allowIncomplete = false }) {
   const { user, loading } = useAuth();
@@ -59,6 +61,8 @@ function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
+      <Route path="/blog" element={<BlogIndex />} />
+      <Route path="/blog/:slug" element={<BlogPost />} />
       <Route
         path="/onboarding"
         element={
@@ -109,14 +113,16 @@ function I18nBinder({ children }) {
 function App() {
   return (
     <div className="App">
-      <BrowserRouter>
-        <AuthProvider>
-          <I18nBinder>
-            <Toaster position="top-right" theme="light" />
-            <AppRouter />
-          </I18nBinder>
-        </AuthProvider>
-      </BrowserRouter>
+      <HelmetProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <I18nBinder>
+              <Toaster position="top-right" theme="light" />
+              <AppRouter />
+            </I18nBinder>
+          </AuthProvider>
+        </BrowserRouter>
+      </HelmetProvider>
     </div>
   );
 }

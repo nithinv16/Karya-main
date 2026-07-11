@@ -49,15 +49,29 @@ export default function VoiceButton({ onResult, showLang = true, title = "Speak"
     setBusy(true);
     try {
       const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+      if (blob.size < 500) {
+        toast.warning("Recording too short. Try again.");
+        return;
+      }
       const fd = new FormData();
       fd.append("file", blob, "clip.webm");
       fd.append("language", lang);
-      const res = await api.post("/voice/transcribe", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const res = await api.post("/voice/transcribe", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 45000,
+      });
       const text = (res.data.text || "").trim();
       if (text) onResult(text);
       else toast.warning("Couldn't hear anything. Try again.");
-    } catch {
-      toast.error("Transcription failed");
+    } catch (err) {
+      const detail = err?.response?.data?.detail || err?.message;
+      if (err?.code === "ECONNABORTED" || (detail || "").includes("timeout")) {
+        toast.error("Transcription timed out. Try a shorter clip.");
+      } else if (err?.response?.status === 413) {
+        toast.error("Recording is too large. Please keep it under 25 MB.");
+      } else {
+        toast.error("Transcription failed. Please try again.");
+      }
     } finally {
       setBusy(false);
     }

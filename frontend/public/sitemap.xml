@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+    <url>
+        <loc>https://karyaai.app/</loc>
+        <lastmod>2026-01-11</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>1.0</priority>
+        <xhtml:link rel="alternate" hreflang="en" href="https://karyaai.app/"/>
+        <xhtml:link rel="alternate" hreflang="hi" href="https://karyaai.app/hi"/>
+        <xhtml:link rel="alternate" hreflang="ta" href="https://karyaai.app/ta"/>
+        <xhtml:link rel="alternate" hreflang="ml" href="https://karyaai.app/ml"/>
+        <xhtml:link rel="alternate" hreflang="te" href="https://karyaai.app/te"/>
+        <xhtml:link rel="alternate" hreflang="x-default" href="https://karyaai.app/"/>
+    </url>
+    <url>
+        <loc>https://karyaai.app/blog</loc>
+        <lastmod>2026-01-11</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>0.8</priority>
+    </url>
+    <url>
+        <loc>https://karyaai.app/blog/built-with-emergent</loc>
+        <lastmod>2026-01-11</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.7</priority>
+    </url>
+    <url>
+        <loc>https://karyaai.app/blog/ai-for-indian-contractors</loc>
+        <lastmod>2026-01-11</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.7</priority>
+    </url>
+    <url>
+        <loc>https://karyaai.app/blog/telegram-whatsapp-site-management</loc>
+        <lastmod>2026-01-11</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.7</priority>
+    </url>
+    <url>
+        <loc>https://karyaai.app/blog/cost-trends-budget-vs-actual</loc>
+        <lastmod>2026-01-11</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.6</priority>
+    </url>
+    <url>
+        <loc>https://karyaai.app/pricing</loc>
+        <lastmod>2026-01-11</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.7</priority>
+    </url>
+</urlset>

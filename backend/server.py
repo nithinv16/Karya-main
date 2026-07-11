@@ -57,11 +57,59 @@ TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
 # returns "" (not the default) when X="" is present. So we normalise here.
 TWILIO_WHATSAPP_FROM = (os.environ.get("TWILIO_WHATSAPP_FROM") or "").strip() or "whatsapp:+14155238886"
 TWILIO_VERIFY_SERVICE_SID = os.environ.get("TWILIO_VERIFY_SERVICE_SID", "").strip()
+TWILIO_VERIFY_SERVICE_NAME = (os.environ.get("TWILIO_VERIFY_SERVICE_NAME") or "").strip() or "Karya AI"
+# Auto-provisioned Verify Service SID (cached after first successful create/lookup).
+_AUTO_VERIFY_SID: Optional[str] = None
 
 def _twilio_client():
     if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
         return None
     return TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+
+async def _get_verify_sid() -> Optional[str]:
+    """Return a usable Twilio Verify Service SID.
+
+    Preference order:
+      1. TWILIO_VERIFY_SERVICE_SID env var (explicit)
+      2. Previously auto-provisioned SID cached in memory / db.system_config
+      3. A newly-created Verify Service (default name = TWILIO_VERIFY_SERVICE_NAME)
+    Returns None only if Twilio itself isn't configured.
+    """
+    global _AUTO_VERIFY_SID
+    if TWILIO_VERIFY_SERVICE_SID:
+        return TWILIO_VERIFY_SERVICE_SID
+    if _AUTO_VERIFY_SID:
+        return _AUTO_VERIFY_SID
+    tw = _twilio_client()
+    if not tw:
+        return None
+    # 2) Check DB for a previously provisioned SID (survives restarts).
+    cached = await db.system_config.find_one({"key": "twilio_verify_sid"})
+    if cached and cached.get("value"):
+        _AUTO_VERIFY_SID = cached["value"]
+        return _AUTO_VERIFY_SID
+    # 3) Look for an existing service with our name before creating a new one.
+    try:
+        services = await asyncio.to_thread(lambda: tw.verify.v2.services.list(limit=50))
+        for s in services or []:
+            if (getattr(s, "friendly_name", "") or "").strip() == TWILIO_VERIFY_SERVICE_NAME:
+                _AUTO_VERIFY_SID = s.sid
+                await db.system_config.update_one({"key": "twilio_verify_sid"}, {"$set": {"value": s.sid, "updated_at": now_iso()}}, upsert=True)
+                logger.info(f"Reusing existing Twilio Verify Service '{TWILIO_VERIFY_SERVICE_NAME}' ({s.sid})")
+                return _AUTO_VERIFY_SID
+    except Exception as e:
+        logger.warning(f"Twilio verify list failed: {e}")
+    # 4) Create a fresh service.
+    try:
+        svc = await asyncio.to_thread(lambda: tw.verify.v2.services.create(friendly_name=TWILIO_VERIFY_SERVICE_NAME))
+        _AUTO_VERIFY_SID = svc.sid
+        await db.system_config.update_one({"key": "twilio_verify_sid"}, {"$set": {"value": svc.sid, "created_at": now_iso()}}, upsert=True)
+        logger.info(f"Auto-provisioned Twilio Verify Service '{TWILIO_VERIFY_SERVICE_NAME}' ({svc.sid})")
+        return _AUTO_VERIFY_SID
+    except Exception as e:
+        logger.error(f"Failed to auto-provision Twilio Verify Service: {e}")
+        return None
 
 def sign_file_path(path: str, expires_at: int) -> str:
     """HMAC-SHA256 signature for time-limited public file URLs."""
@@ -436,15 +484,16 @@ class PhoneVerifyCheckIn(BaseModel):
 async def phone_verify_start(body: PhoneVerifyStartIn, user: dict = Depends(get_current_user)):
     tw = _twilio_client()
     if not tw:
-        raise HTTPException(status_code=503, detail="Twilio not configured on the server (missing TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN).")
-    if not TWILIO_VERIFY_SERVICE_SID:
-        raise HTTPException(status_code=503, detail="Twilio Verify Service SID not configured. Ask the admin to create a Verify Service and set TWILIO_VERIFY_SERVICE_SID.")
+        raise HTTPException(status_code=503, detail="Phone verification is not configured on this server.")
+    verify_sid = await _get_verify_sid()
+    if not verify_sid:
+        raise HTTPException(status_code=503, detail="Phone verification service unavailable. Please try again in a moment.")
     phone = _normalize_phone(body.phone)
     if not _E164.match(phone):
         raise HTTPException(status_code=400, detail="Enter your phone in international format, e.g. +919876543210 or +971501234567.")
     try:
         v = await asyncio.to_thread(
-            lambda: tw.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verifications.create(to=phone, channel="sms")
+            lambda: tw.verify.v2.services(verify_sid).verifications.create(to=phone, channel="sms")
         )
     except TwilioRestException as e:
         msg = getattr(e, "msg", None) or str(e)
@@ -458,16 +507,17 @@ async def phone_verify_start(body: PhoneVerifyStartIn, user: dict = Depends(get_
 async def phone_verify_check(body: PhoneVerifyCheckIn, user: dict = Depends(get_current_user)):
     tw = _twilio_client()
     if not tw:
-        raise HTTPException(status_code=503, detail="Twilio not configured.")
-    if not TWILIO_VERIFY_SERVICE_SID:
-        raise HTTPException(status_code=503, detail="Twilio Verify Service SID not configured.")
+        raise HTTPException(status_code=503, detail="Phone verification is not configured on this server.")
+    verify_sid = await _get_verify_sid()
+    if not verify_sid:
+        raise HTTPException(status_code=503, detail="Phone verification service unavailable. Please try again in a moment.")
     phone = _normalize_phone(body.phone)
     code = (body.code or "").strip()
     if not _E164.match(phone) or not code:
         raise HTTPException(status_code=400, detail="Phone or code missing.")
     try:
         check = await asyncio.to_thread(
-            lambda: tw.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verification_checks.create(to=phone, code=code)
+            lambda: tw.verify.v2.services(verify_sid).verification_checks.create(to=phone, code=code)
         )
     except TwilioRestException as e:
         msg = getattr(e, "msg", None) or str(e)
@@ -485,8 +535,15 @@ async def phone_verify_check(body: PhoneVerifyCheckIn, user: dict = Depends(get_
 
 @api.get("/profile/phone/verify/status")
 async def phone_verify_status(user: dict = Depends(get_current_user)):
+    tw_ok = bool(_twilio_client())
+    verify_sid: Optional[str] = None
+    if tw_ok:
+        try:
+            verify_sid = await _get_verify_sid()
+        except Exception:
+            verify_sid = None
     return {
-        "verify_available": bool(_twilio_client()) and bool(TWILIO_VERIFY_SERVICE_SID),
+        "verify_available": tw_ok and bool(verify_sid),
         "phone": user.get("phone", "") or "",
         "phone_verified": bool(user.get("phone_verified")),
     }
@@ -774,29 +831,73 @@ async def download_file(
     data, ct = await asyncio.to_thread(get_object, path)
     return Response(content=data, media_type=rec.get("content_type") or ct)
 
-# ---------------------------------------------------------------- voice
+# ---- rate limiter -----------------------------------------------------------
+# In-process sliding window. Fine for our single-pod deployment; migrate to
+# Redis if we ever scale out horizontally.
+_RATE_BUCKETS: Dict[str, List[float]] = {}
+_RATE_LOCK = asyncio.Lock()
+
+
+async def rate_limit(key: str, limit: int, window_seconds: int):
+    """Raise HTTP 429 if `key` has exceeded `limit` calls in `window_seconds`."""
+    import time as _time
+    now = _time.monotonic()
+    cutoff = now - window_seconds
+    async with _RATE_LOCK:
+        hits = [t for t in _RATE_BUCKETS.get(key, []) if t > cutoff]
+        if len(hits) >= limit:
+            retry_after = max(1, int(window_seconds - (now - hits[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please slow down.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        hits.append(now)
+        _RATE_BUCKETS[key] = hits
+        # Occasional GC: drop keys older than any window we care about.
+        if len(_RATE_BUCKETS) > 5000:
+            for k in list(_RATE_BUCKETS.keys()):
+                if not _RATE_BUCKETS[k] or _RATE_BUCKETS[k][-1] < now - 3600:
+                    _RATE_BUCKETS.pop(k, None)
+
+
 
 @api.post("/voice/transcribe")
 async def voice_transcribe(file: UploadFile = File(...), language: str = Form("auto"), user: dict = Depends(get_current_user)):
+    # 30 transcriptions / minute per user — well above realistic use, cheap to bypass abuse.
+    await rate_limit(f"stt:{user['user_id']}", limit=30, window_seconds=60)
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty audio")
+    # Guard-rail: 25 MB is OpenAI Whisper's own limit; reject earlier so the
+    # ingress doesn't 504 on huge uploads.
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio too large (25MB max)")
     buf = io.BytesIO(data)
     buf.name = file.filename or "clip.webm"
     stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
-    kwargs = {}
+    kwargs: Dict[str, Any] = {}
     if language and language != "auto":
         kwargs["language"] = language
-    last_err = None
-    for attempt in range(3):
+    # 2 attempts with a short backoff — we're behind a 60s ingress and a longer
+    # loop just guarantees a 504 to the browser. Fail fast, let the UI retry.
+    last_err: Optional[Exception] = None
+    for attempt in range(2):
         try:
             buf.seek(0)
-            resp = await stt.transcribe(file=buf, model="whisper-1", response_format="json", **kwargs)
+            resp = await asyncio.wait_for(
+                stt.transcribe(file=buf, model="whisper-1", response_format="json", **kwargs),
+                timeout=25,
+            )
             return {"text": (resp.text or "").strip()}
+        except asyncio.TimeoutError:
+            last_err = Exception("upstream timeout")
         except Exception as e:
             last_err = e
-            await asyncio.sleep(1.2 * (attempt + 1))
-    raise HTTPException(status_code=502, detail=f"Transcription failed: {last_err}")
+        if attempt == 0:
+            await asyncio.sleep(0.6)
+    logger.warning(f"voice_transcribe failed: {last_err}")
+    raise HTTPException(status_code=502, detail="Transcription temporarily unavailable. Please try again.")
 
 # ---------------------------------------------------------------- NL command
 
@@ -2806,6 +2907,97 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(get_current_user)
     return exp
 
 
+@api.post("/expenses/upload-receipt")
+async def upload_receipt(
+    file: UploadFile = File(...),
+    project_id: Optional[str] = Form(None),
+    user: dict = Depends(get_current_user),
+):
+    """Upload a receipt image/PDF; AI parses vendor + amount + items; saves as expense.
+
+    Mirrors the Telegram receipt flow so users can drop receipts straight from the
+    web app instead of forwarding to Telegram.
+    """
+    await rate_limit(f"receipt:{user['user_id']}", limit=20, window_seconds=60)
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Receipt too large (20MB max)")
+    ct = (file.content_type or "").lower()
+    fname = file.filename or "receipt"
+    is_image = ct.startswith("image/") or any(fname.lower().endswith(x) for x in (".jpg", ".jpeg", ".png", ".webp", ".heic"))
+    is_pdf = ct == "application/pdf" or fname.lower().endswith(".pdf")
+    if not (is_image or is_pdf):
+        raise HTTPException(status_code=415, detail="Please upload a photo (JPG/PNG) or PDF of the receipt.")
+
+    # 1) Store the file so we can attach it to the expense.
+    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ("jpg" if is_image else "pdf")
+    path = f"{APP_NAME}/receipts/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+    stored = await asyncio.to_thread(put_object, path, data, ct or ("image/jpeg" if is_image else "application/pdf"))
+    file_rec = {
+        "id": new_id(), "owner_id": user["user_id"], "path": stored["path"],
+        "filename": fname, "content_type": ct or ("image/jpeg" if is_image else "application/pdf"),
+        "size": stored.get("size", len(data)),
+        "extracted_text": extract_text(data, ct, fname) if is_pdf else "",
+        "is_deleted": False, "created_at": now_iso(),
+    }
+    await db.files.insert_one({**file_rec})
+
+    # 2) Ask the vision model to parse the receipt.
+    parsed: Dict[str, Any] = {}
+    try:
+        if is_image:
+            b64 = base64.b64encode(data).decode()
+            parsed = await ai_json(
+                RECEIPT_SYSTEM, "Extract this receipt.",
+                images=[ImageContent(image_base64=b64)],
+                provider="openai", model="gpt-4o",
+            )
+        else:
+            text = file_rec.get("extracted_text") or ""
+            if not text.strip():
+                raise HTTPException(status_code=422, detail="Couldn't read any text from that PDF. Try a clearer scan or photo.")
+            parsed = await ai_json(
+                RECEIPT_SYSTEM, f"Receipt text:\n{text[:5000]}",
+                provider="openai", model="gpt-4o",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"receipt parse failed: {e}")
+        parsed = {}
+
+    amount = float(parsed.get("total_amount") or 0)
+    ctx = country_ctx(user)
+    att = {"path": file_rec["path"], "filename": file_rec["filename"], "content_type": file_rec["content_type"], "size": file_rec["size"]}
+    exp = {
+        "id": new_id(), "owner_id": user["user_id"],
+        "vendor": (parsed.get("vendor") or "").strip(),
+        "date": parsed.get("date") or today_str(),
+        "amount": amount,
+        "currency": (parsed.get("currency") or ctx["currency_code"]).strip(),
+        "category": parsed.get("category") or "other",
+        "items": parsed.get("items") or [],
+        "summary": (parsed.get("summary") or "").strip(),
+        "attachment": att,
+        "source": "web_upload",
+        "project_id": project_id or None,
+        "created_at": now_iso(),
+    }
+    await db.expenses.insert_one({**exp})
+    exp.pop("_id", None)
+    # Also drop into org knowledge so /help & search find it.
+    await db.knowledge.insert_one({
+        "id": new_id(), "owner_id": user["user_id"],
+        "title": f"Receipt — {exp['vendor'] or 'unknown vendor'} ({money_str(amount, user)})",
+        "content": exp["summary"] or f"Receipt of {money_str(amount, user)} — category {exp['category']}.",
+        "project_id": exp["project_id"], "tags": ["receipt", "expense", "web"],
+        "attachment": att, "created_at": now_iso(),
+    })
+    return {"expense": exp, "parsed": bool(parsed.get("total_amount"))}
+
+
 @api.delete("/expenses/{expense_id}")
 async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)):
     result = await db.expenses.delete_one({"id": expense_id, "owner_id": user["user_id"]})
@@ -3096,9 +3288,10 @@ _PING_TYPES = ("morning_briefing", "compliance_alerts", "payroll_reminder")
 
 _DEFAULT_NOTIFICATIONS = {
     "timezone": "Asia/Kolkata",
-    "morning_briefing": {"enabled": True, "time": "08:00"},
-    "compliance_alerts": {"enabled": True},
-    "payroll_reminder": {"enabled": True, "time": "09:00", "days": [1, 5]},  # Mon (1) + Fri (5), ISO weekday
+    # All three ping types are opt-in — user must enable them from Profile page.
+    "morning_briefing": {"enabled": False, "time": "08:00"},
+    "compliance_alerts": {"enabled": False},
+    "payroll_reminder": {"enabled": False, "time": "09:00", "days": [1, 5]},
 }
 
 
@@ -3405,16 +3598,71 @@ api.include_router(_build_reports_router(_ReportsDeps(
 app.include_router(api)
 
 
-# --- CORS + startup ---
+# --- Security middleware -----------------------------------------------------
+
+# CORS: default to explicit env allowlist; fall back to preview/prod Emergent domains
+# via allow_origin_regex. We NEVER default to "*" because that combined with
+# allow_credentials=True is explicitly rejected by browsers and is a red flag in
+# security audits. If CORS_ORIGINS is empty we simply don't add any static entries
+# and rely on the regex allowlist below.
+_CORS_ENV = (os.environ.get("CORS_ORIGINS") or "").strip()
+_CORS_ORIGINS = [o.strip() for o in _CORS_ENV.split(",") if o.strip()] if _CORS_ENV else []
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",")],
-    allow_origin_regex=r"https://[a-z0-9-]+\.(preview\.emergentagent\.com|emergent\.host|emergent\.sh)",
+    allow_origins=_CORS_ORIGINS,
+    allow_origin_regex=r"https://([a-z0-9-]+\.)?(preview\.emergentagent\.com|emergent\.host|emergent\.sh|karyaai\.app)$",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Session-Token"],
+    expose_headers=["Content-Length", "Content-Type"],
+    max_age=86400,
 )
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Attach industry-standard security headers to every response.
+
+    The frontend is served on karyaai.app + Emergent preview domains — none of
+    which need to be embedded in third-party frames, so we default to DENY. We
+    also disable the browser MIME-sniffer and turn on Referrer-Policy.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()")
+    response.headers.setdefault(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains",
+    )
+    # A restrictive but functional CSP for the API. The React app is served from
+    # a different host so this only protects direct API responses (rare misuse
+    # vector but cheap to add).
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none';",
+    )
+    return response
+
+
+# Payload size guard — the ingress caps at ~30MB but we also protect the app
+# from oversized JSON bodies that would hog memory before the endpoint runs.
+_MAX_BODY_BYTES = int(os.environ.get("MAX_REQUEST_BYTES", "26214400"))  # 25 MiB
+
+
+@app.middleware("http")
+async def _reject_oversize(request: Request, call_next):
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > _MAX_BODY_BYTES:
+        return Response(
+            content='{"detail":"Request body too large"}',
+            status_code=413,
+            media_type="application/json",
+        )
+    return await call_next(request)
+
 
 @app.on_event("startup")
 async def startup():
