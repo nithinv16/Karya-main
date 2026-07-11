@@ -80,6 +80,17 @@ Karya-main repo (construction ops platform: workforce, payroll, subcontractors, 
    - Profile page: new 5-tile language selector, instant switch + persists to `PUT /api/auth/profile`.
 3. **On-demand AI translation** — `POST /api/translate` (Emergent LLM Key), with SHA-256 cached translations in `db.translations`. Reusable `TranslateButton` component appears below Help articles and can be dropped onto any dynamic content (report bodies, SOPs, feed).
 
+## Iteration 24 (2026-07) — Telegram voice-out via OpenAI TTS
+When a user sends a voice note to the Telegram bot, the bot's replies are now also spoken back as opus voice messages (OpenAI TTS `tts-1`, voice `nova`). Implementation uses a `ContextVar _TG_SPEAK` that propagates through async chains — `_handle_tg_voice` flips it on with token/reset, and every downstream `tg_send()` mirrors as speech via `tg_speak() → tg_send_voice()`. HTML/markdown stripped via `_for_tts()`. Failure-resilient: TTS errors swallowed with log warning. 12/12 tests pass.
+
+## Iteration 25 (2026-07) — Expenses page + Language PATCH + Telegram report picker + Translate everywhere
+1. **Expenses page** (`/expenses`, nav item between Reports and Insights). Backend: `GET /api/expenses` (search + category + total + by-category rollup), `POST /api/expenses` (manual), `DELETE /api/expenses/{id}`. Receipts forwarded to Telegram (existing flow) auto-populate here.
+2. **PATCH /api/auth/profile/language** — lightweight endpoint that validates against `{en,hi,ml,ta,te}` and updates only `user.language`. Profile page's `pickLanguage()` now uses this (previously sent the full `ProfileIn` payload, which 422'd for partial profiles).
+3. **Telegram `/report` project picker** — refactored `_handle_tg_report_command`: 0 or 1 projects → runs as before. 2+ projects → sends inline keyboard listing up to 8 recent projects + "— No project —" fallback. New `report_pick|<pid>` callback_query dispatches to shared `_generate_and_send_report()`.
+4. **`TranslateButton` wired everywhere it matters** — DailyReports detail modal, SOP details, and every Feed article now have the button (Help + AI answers had it from iter 23).
+
+22/22 backend tests pass. Regressions across iter 20–24 all green.
+
 ## Backlog / Next
 - P1: Expenses page in web UI (receipts currently visible via Org Memory; db.expenses has structured data)
 - P1: Let user pick project when generating /report from Telegram (currently most-recent project)
