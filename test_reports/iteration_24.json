@@ -1,0 +1,22 @@
+{
+  "summary": "Iteration 24 — Telegram voice-in -> voice-out (OpenAI TTS) feature testing. 12/12 tests passed including live OpenAI TTS generation (real OGG opus bytes, ~15KB), ContextVar propagation, tg_send also-speak behavior, _handle_tg_voice set/reset flag, TTS failure resilience, and 3 regression checks (telegram /start CODE, /api/translate, /api/help/ask, /api/insights).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration24_tts_voice.py",
+    "/app/test_reports/pytest/iteration24.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 2796 lines — should be split into modules (telegram/, ai/, routes/) per file-size guideline (>700 LOC).",
+    "FastAPI @app.on_event('startup') is deprecated — migrate to lifespan handlers.",
+    "tg_send's also-speak triggers a full OpenAI TTS call for every reply while _TG_SPEAK is True; consider batching or dedupe for chatty flows to reduce cost/latency (1-4s per call)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "n/a"},
+  "test_credentials": "Bearer test_session_karya1 (from /app/memory/test_credentials.md). Webhook secret: karya-tg-hook-7f3a9c2e. QA chat_id 999000111 preserved after tests.",
+  "seed_data_creation": "None. The /start CODE regression re-links QA user's telegram_chat_id to 999000111 which matches pre-test state.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "TTS feature verified end-to-end. OpenAI TTS via emergentintegrations.OpenAITextToSpeech(model=tts-1, voice=nova, response_format=opus) returns valid OGG bytes (~15KB for a short sentence). _TG_SPEAK ContextVar cleanly propagates through async chain and is reset in finally block. All prior iteration (20-23) regressions green."
+}

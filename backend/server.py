@@ -21,7 +21,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from pypdf import PdfReader
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
-from emergentintegrations.llm.openai import OpenAISpeechToText
+from emergentintegrations.llm.openai import OpenAISpeechToText, OpenAITextToSpeech
 from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
 
@@ -933,11 +933,70 @@ async def tg_api(method: str, payload: dict) -> dict:
         return {}
 
 
+# --- Voice-reply context: when the user sent a voice note, we mirror our text
+# replies as spoken audio via OpenAI TTS. A ContextVar propagates the flag
+# through async chains so we don't have to thread a parameter through every
+# nested handler.
+from contextvars import ContextVar
+_TG_SPEAK: ContextVar[bool] = ContextVar("tg_speak", default=False)
+
+# Strip HTML tags + common markdown so TTS speaks clean prose
+_HTML_STRIP = re.compile(r"<[^>]+>")
+_MD_EMPH = re.compile(r"[*_`]{1,3}")
+
+
+def _for_tts(text: str) -> str:
+    if not text:
+        return ""
+    s = _HTML_STRIP.sub("", text)
+    s = _MD_EMPH.sub("", s)
+    # Common shorthand → speakable
+    s = s.replace("—", ", ").replace("•", ", ").replace("\n", ". ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:600]  # keep TTS calls short (cost + latency)
+
+
+async def tg_send_voice(chat_id: int, audio_bytes: bytes, filename: str = "reply.ogg"):
+    """Upload a voice note (opus) to Telegram via multipart sendVoice."""
+    if not _tg_configured() or not audio_bytes:
+        return {}
+    try:
+        files = {"voice": (filename, audio_bytes, "audio/ogg")}
+        data = {"chat_id": str(chat_id)}
+        r = await asyncio.to_thread(
+            http_requests.post, f"{TG_API}/sendVoice", data=data, files=files, timeout=30,
+        )
+        return r.json() if r.content else {}
+    except Exception as e:
+        logger.warning(f"tg sendVoice failed: {e}")
+        return {}
+
+
+async def tg_speak(chat_id: int, text: str, lang: str = "en"):
+    """Synthesize `text` to speech via OpenAI TTS and forward as a Telegram voice note."""
+    spoken = _for_tts(text)
+    if not spoken or not EMERGENT_LLM_KEY:
+        return
+    try:
+        tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
+        # nova = warm/upbeat, good for confirmations. Opus is Telegram's native voice format.
+        audio_bytes = await tts.generate_speech(
+            text=spoken, model="tts-1", voice="nova", response_format="opus",
+        )
+        await tg_send_voice(chat_id, audio_bytes)
+    except Exception as e:
+        logger.warning(f"tg tts failed: {e}")
+
+
 async def tg_send(chat_id: int, text: str, reply_markup: Optional[dict] = None):
     payload = {"chat_id": chat_id, "text": text[:4000], "parse_mode": "HTML"}
     if reply_markup:
         payload["reply_markup"] = reply_markup
-    return await tg_api("sendMessage", payload)
+    result = await tg_api("sendMessage", payload)
+    # If the user came in via a voice note, also speak this reply back.
+    if _TG_SPEAK.get():
+        await tg_speak(chat_id, text)
+    return result
 
 
 async def tg_get_file_bytes(file_id: str) -> Optional[tuple[bytes, str]]:
@@ -1331,8 +1390,13 @@ async def _handle_tg_voice(chat_id: int, file_id: str, user: dict):
     if not transcript:
         await tg_send(chat_id, "🎙️ I couldn't hear anything in that recording.")
         return
-    await tg_send(chat_id, f"🎙️ <i>Heard:</i> {transcript}")
-    await _handle_tg_text(chat_id, transcript, user)
+    # Any tg_send() called inside this block will ALSO speak the reply via OpenAI TTS.
+    token = _TG_SPEAK.set(True)
+    try:
+        await tg_send(chat_id, f"🎙️ <i>Heard:</i> {transcript}")
+        await _handle_tg_text(chat_id, transcript, user)
+    finally:
+        _TG_SPEAK.reset(token)
 
 
 async def _handle_tg_photo(chat_id: int, file_id: str, caption: str, user: dict):
