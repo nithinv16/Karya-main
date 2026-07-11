@@ -139,3 +139,24 @@ Testing: `iteration_28.json` — 23/23 tests pass (17 iter27 suite + 6 focused r
 - P2: Replace preview-host substring match with dedicated `IS_PREVIEW` env flag (brittle if domain changes).
 - P2: WhatsApp (Twilio) still inactive — needs real Twilio creds.
 
+## Iteration 30 (2026-07) — Attendance register, Contact form, company identity
+1. **Attendance register** — new `/attendance` page in the web app under Workforce with per-worker present / half-day / absent toggles, bulk "Mark all present", and a Quick Headcount form for supervisors who don't track by name. Backed by new endpoints:
+   - `GET /api/attendance` (list with date range/project/worker filters)
+   - `GET /api/attendance/roster?date=&project_id=` (roster grid with unmarked default)
+   - `POST /api/attendance/mark` (upsert one row per worker/date)
+   - `POST /api/attendance/bulk` (batch marks)
+   - `POST /api/attendance/headcount` (aggregate N-workers-at-project row)
+   - `DELETE /api/attendance/{id}`
+   Nav entry added to sidebar; localized keys in en/hi/ta/te/ml.
+2. **Telegram `/attendance` command** with three parse paths: `/attendance 12 Site A` (headcount by fuzzy project name), `/attendance Ramesh present` (per-worker mark; supports present/absent/half day), `/attendance` alone → today's summary. When user has 2+ projects and no name given, the bot replies with an inline-keyboard project picker; callback `att_head|<count>|<project_id>` records the headcount.
+3. **Company identity & Contact form** — new public pages/endpoints:
+   - `GET /api/company-info` → `{legal_name:"SIXN8 Technologies Private Ltd", support_email:"admin@dukaaon.in", product_name, website}`.
+   - `POST /api/contact` (public, IP-rate-limited 5/5min): validates name/email/message, saves to `db.contact_submissions`, and quietly relays the submission via Telegram to the ops-owner's chat_id.
+   - `/contact` page renders a clean form with SIXN8 + support-email side panel; login-page footer now shows SIXN8 attribution + Blog/Contact/admin@dukaaon.in links.
+4. **NithinV16 secret delivery pipeline** — the Telegram webhook silently watches `msg.from.username` on every inbound update; when it matches `CONTACT_TG_USERNAME` (case-insensitive) the chat_id is cached in `db.system_config` under key `contact_chat_id`. Contact submissions then send-to that chat_id. The handle is stored **only** in `backend/.env` (never surfaced in any API response, HTML source, or JS bundle — testing agent verified zero leak).
+5. **Structured data update** — Organization schema on the landing page now advertises SIXN8 Technologies + admin@dukaaon.in with a `ContactPoint` entry; sitemap.xml includes `/contact`.
+
+Testing: `iteration_30.json` — **20/20 backend + 3/3 frontend flows pass**, zero critical/minor issues, no NithinV16 leak.
+
+
+
