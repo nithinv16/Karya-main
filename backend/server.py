@@ -652,167 +652,37 @@ async def update_onboarding(worker_id: str, body: OnboardingIn, user: dict = Dep
 
 
 # ---------------------------------------------------------------- attendance
-# Two shapes coexist for historic reasons:
-#   • per-worker rows (worker_id set, status in present/absent/half-day, count=1)
-#   • aggregate rows (worker_id=None, project_id set, count=N)  ← what the
-#     Telegram bot writes when the supervisor says "10 workers at Site A".
-# The list endpoint returns both; the roster endpoint returns only the per-worker
-# rows for a specific date.
+# CRUD endpoints have been moved to routes/attendance.py. The Telegram
+# /attendance command handler below still calls the extracted core helpers
+# via server-level shims wired in the mount block.
+from routes.attendance import (
+    AttendanceMarkIn, AttendanceHeadcountIn,
+    mark_attendance_core as _mark_attendance_core,
+    headcount_attendance_core as _headcount_attendance_core,
+    Deps as _AttendanceDeps,
+)
 
-_ATTENDANCE_STATUSES = ("present", "absent", "half_day")
-
-
-class AttendanceMarkIn(BaseModel):
-    date: str = ""  # YYYY-MM-DD; defaults to today
-    worker_id: Optional[str] = None
-    project_id: Optional[str] = None
-    status: str = "present"  # present|absent|half_day
-    note: Optional[str] = None
+_ATTENDANCE_DEPS_LAZY: Optional[_AttendanceDeps] = None
 
 
-class AttendanceBulkIn(BaseModel):
-    date: str = ""
-    project_id: Optional[str] = None
-    entries: List[AttendanceMarkIn] = []
+def _attendance_deps() -> _AttendanceDeps:
+    """Lazy: db/helpers are defined earlier in this module; build once."""
+    global _ATTENDANCE_DEPS_LAZY
+    if _ATTENDANCE_DEPS_LAZY is None:
+        _ATTENDANCE_DEPS_LAZY = _AttendanceDeps(
+            db=db, get_current_user=get_current_user,
+            new_id=new_id, now_iso=now_iso, today_str=today_str,
+        )
+    return _ATTENDANCE_DEPS_LAZY
 
 
-class AttendanceHeadcountIn(BaseModel):
-    """Quick 'N workers came today' entry for supervisors who don't track by name."""
-    date: str = ""
-    project_id: Optional[str] = None
-    count: int = 1
-    note: Optional[str] = None
+async def mark_attendance(body: AttendanceMarkIn, user: dict):  # shim for Telegram handler
+    return await _mark_attendance_core(_attendance_deps(), body, user)
 
 
-@api.get("/attendance")
-async def list_attendance(
-    user: dict = Depends(get_current_user),
-    date: str = "",
-    from_date: str = "",
-    to_date: str = "",
-    project_id: str = "",
-    worker_id: str = "",
-    limit: int = 500,
-):
-    q: Dict[str, Any] = {"owner_id": user["user_id"]}
-    if date:
-        q["date"] = date
-    elif from_date or to_date:
-        q["date"] = {}
-        if from_date: q["date"]["$gte"] = from_date
-        if to_date: q["date"]["$lte"] = to_date
-    if project_id:
-        q["project_id"] = project_id
-    if worker_id:
-        q["worker_id"] = worker_id
-    limit = max(1, min(int(limit or 500), 2000))
-    rows = await db.attendance.find(q, {"_id": 0}).sort("date", -1).limit(limit).to_list(limit)
-    return {"items": rows, "count": len(rows)}
+async def headcount_attendance(body: AttendanceHeadcountIn, user: dict):  # shim for Telegram handler
+    return await _headcount_attendance_core(_attendance_deps(), body, user)
 
-
-@api.get("/attendance/roster")
-async def attendance_roster(
-    user: dict = Depends(get_current_user),
-    date: str = "",
-    project_id: str = "",
-):
-    """Return every worker with their status for the given date (for a checklist UI)."""
-    day = date or today_str()
-    uid = user["user_id"]
-    w_query: Dict[str, Any] = {"owner_id": uid}
-    if project_id:
-        w_query["project_id"] = project_id
-    workers = await db.workers.find(w_query, {"_id": 0}).sort("name", 1).to_list(2000)
-    att_q: Dict[str, Any] = {"owner_id": uid, "date": day, "worker_id": {"$ne": None}}
-    att = await db.attendance.find(att_q, {"_id": 0}).to_list(5000)
-    by_worker = {a["worker_id"]: a for a in att}
-    roster = []
-    for w in workers:
-        rec = by_worker.get(w["id"])
-        roster.append({
-            "worker_id": w["id"],
-            "name": w.get("name") or "",
-            "role": w.get("role") or "",
-            "project_id": w.get("project_id"),
-            "rate": w.get("rate") or 0,
-            "rate_type": w.get("rate_type") or "daily",
-            "status": (rec or {}).get("status") or "unmarked",
-            "note": (rec or {}).get("note") or "",
-            "attendance_id": (rec or {}).get("id"),
-        })
-    # Also fetch aggregate headcount rows for the day (from Telegram supervisors).
-    head_q = {"owner_id": uid, "date": day, "worker_id": None}
-    if project_id:
-        head_q["project_id"] = project_id
-    headcounts = await db.attendance.find(head_q, {"_id": 0}).to_list(200)
-    return {"date": day, "project_id": project_id or None, "roster": roster, "headcounts": headcounts}
-
-
-@api.post("/attendance/mark")
-async def mark_attendance(body: AttendanceMarkIn, user: dict = Depends(get_current_user)):
-    if not body.worker_id:
-        raise HTTPException(status_code=400, detail="worker_id required")
-    if body.status not in _ATTENDANCE_STATUSES:
-        raise HTTPException(status_code=400, detail=f"status must be one of {_ATTENDANCE_STATUSES}")
-    uid = user["user_id"]
-    worker = await db.workers.find_one({"id": body.worker_id, "owner_id": uid}, {"_id": 0})
-    if not worker:
-        raise HTTPException(status_code=404, detail="Worker not found")
-    day = body.date or today_str()
-    project_id = body.project_id or worker.get("project_id")
-    # Upsert: one row per (worker, date).
-    doc = {
-        "id": new_id(), "owner_id": uid, "worker_id": worker["id"],
-        "project_id": project_id, "date": day, "status": body.status,
-        "count": 1 if body.status != "absent" else 0,
-        "note": (body.note or "").strip() or None,
-        "created_at": now_iso(),
-    }
-    existing = await db.attendance.find_one({"owner_id": uid, "worker_id": worker["id"], "date": day}, {"_id": 0, "id": 1})
-    if existing:
-        doc["id"] = existing["id"]
-        await db.attendance.update_one({"id": existing["id"]}, {"$set": {k: v for k, v in doc.items() if k not in ("id", "created_at")}})
-    else:
-        await db.attendance.insert_one({**doc})
-    return doc
-
-
-@api.post("/attendance/bulk")
-async def bulk_mark_attendance(body: AttendanceBulkIn, user: dict = Depends(get_current_user)):
-    day = body.date or today_str()
-    results = []
-    for e in body.entries:
-        payload = AttendanceMarkIn(date=day, worker_id=e.worker_id, project_id=e.project_id or body.project_id, status=e.status, note=e.note)
-        try:
-            results.append(await mark_attendance(payload, user))
-        except HTTPException as exc:
-            results.append({"error": exc.detail, "worker_id": e.worker_id})
-    return {"date": day, "results": results}
-
-
-@api.post("/attendance/headcount")
-async def headcount_attendance(body: AttendanceHeadcountIn, user: dict = Depends(get_current_user)):
-    """Log 'N workers at project X on date Y' without naming each worker."""
-    if body.count < 0 or body.count > 10000:
-        raise HTTPException(status_code=400, detail="count out of range")
-    day = body.date or today_str()
-    doc = {
-        "id": new_id(), "owner_id": user["user_id"], "worker_id": None,
-        "project_id": body.project_id or None, "date": day,
-        "count": int(body.count), "status": None,
-        "note": (body.note or "").strip() or None,
-        "created_at": now_iso(),
-    }
-    await db.attendance.insert_one({**doc})
-    return doc
-
-
-@api.delete("/attendance/{attendance_id}")
-async def delete_attendance(attendance_id: str, user: dict = Depends(get_current_user)):
-    r = await db.attendance.delete_one({"id": attendance_id, "owner_id": user["user_id"]})
-    if r.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Not found")
-    return {"deleted": True}
 
 # ---------------------------------------------------------------- transactions & ledger
 
@@ -892,11 +762,15 @@ def sub_summary(sub: dict, txns: list) -> dict:
 @api.get("/subcontractors")
 async def list_subs(user: dict = Depends(get_current_user)):
     subs = await db.subcontractors.find({"owner_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
-    out = []
-    for s in subs:
-        txns = await db.sub_transactions.find({"sub_id": s["id"]}, {"_id": 0}).to_list(2000)
-        out.append({**s, "summary": sub_summary(s, txns)})
-    return out
+    if not subs:
+        return []
+    # Single bulk query instead of one round-trip per sub (was N+1).
+    sub_ids = [s["id"] for s in subs]
+    all_txns = await db.sub_transactions.find({"sub_id": {"$in": sub_ids}}, {"_id": 0}).to_list(20000)
+    by_sub: Dict[str, List[dict]] = {}
+    for t in all_txns:
+        by_sub.setdefault(t.get("sub_id"), []).append(t)
+    return [{**s, "summary": sub_summary(s, by_sub.get(s["id"], []))} for s in subs]
 
 @api.post("/subcontractors")
 async def create_sub(body: SubIn, user: dict = Depends(get_current_user)):
@@ -2596,10 +2470,15 @@ async def _assistant_answer(user: dict, question: str) -> str:
             f"earned ₹{int(s['earned'])}, advances ₹{int(s['advances'])}, deductions ₹{int(s['deductions'])}, net payable ₹{int(s['balance'])}"
         )
     sub_lines = []
-    for s in subs:
-        st = await db.sub_transactions.find({"sub_id": s["id"]}, {"_id": 0}).to_list(2000)
-        sm = sub_summary(s, st)
-        sub_lines.append(f"- {s['name']} ({s.get('firm', '')}, {s.get('trade', '')}): gross ₹{int(sm['gross'])}, paid ₹{int(sm['paid'])}, retention held ₹{int(sm['retention_held'])}, pending ₹{int(sm['pending'])}")
+    if subs:
+        sub_ids = [s["id"] for s in subs]
+        all_sub_txns = await db.sub_transactions.find({"sub_id": {"$in": sub_ids}}, {"_id": 0}).to_list(20000)
+        sub_txns_map: Dict[str, List[dict]] = {}
+        for t in all_sub_txns:
+            sub_txns_map.setdefault(t.get("sub_id"), []).append(t)
+        for s in subs:
+            sm = sub_summary(s, sub_txns_map.get(s["id"], []))
+            sub_lines.append(f"- {s['name']} ({s.get('firm', '')}, {s.get('trade', '')}): gross ₹{int(sm['gross'])}, paid ₹{int(sm['paid'])}, retention held ₹{int(sm['retention_held'])}, pending ₹{int(sm['pending'])}")
     today = today_str()
     cost_today = sum(t["amount"] for t in txns if t["type"] == "wage" and t.get("date") == today)
     recent = "\n".join(f"- {t.get('date')}: {t['type']} ₹{int(t['amount'])} for {next((w['name'] for w in workers if w['id'] == t['worker_id']), '?')} {('(' + t['note'] + ')') if t.get('note') else ''}" for t in txns[:40])
@@ -3116,332 +2995,12 @@ async def export_compliance(format: str = "pdf", user: dict = Depends(get_curren
 
 
 # ---------------------------------------------------------------- expenses
-
-class ExpenseIn(BaseModel):
-    vendor: str = ""
-    date: str = ""
-    amount: float = 0.0
-    currency: str = ""
-    category: str = "other"
-    summary: str = ""
-    items: List[Dict[str, Any]] = []
-    project_id: Optional[str] = None
-
-
-@api.get("/expenses")
-async def list_expenses(user: dict = Depends(get_current_user), q: str = "", category: str = "", limit: int = 500, offset: int = 0):
-    query: Dict[str, Any] = {"owner_id": user["user_id"]}
-    if category:
-        query["category"] = category
-    if q:
-        # Case-insensitive regex on vendor + summary. Escape any regex metacharacters
-        # in the user's query so a trailing "." doesn't turn into "match any char".
-        needle = re.escape(q.strip())
-        if needle:
-            query["$or"] = [
-                {"vendor": {"$regex": needle, "$options": "i"}},
-                {"summary": {"$regex": needle, "$options": "i"}},
-            ]
-    try:
-        limit_val = int(limit)
-    except (TypeError, ValueError):
-        limit_val = 500
-    try:
-        offset_val = int(offset)
-    except (TypeError, ValueError):
-        offset_val = 0
-    limit = max(1, min(limit_val, 2000))
-    offset = max(0, offset_val)
-    total_count = await db.expenses.count_documents(query)
-    docs = await db.expenses.find(query, {"_id": 0}).sort("date", -1).skip(offset).limit(limit).to_list(limit)
-    ctx = country_ctx(user)
-    total = round(sum(float(d.get("amount") or 0) for d in docs), 2)
-    by_cat: Dict[str, float] = {}
-    for d in docs:
-        by_cat[d.get("category", "other")] = by_cat.get(d.get("category", "other"), 0) + float(d.get("amount") or 0)
-    return {
-        "items": docs,
-        "total": total,
-        "count": total_count,
-        "limit": limit,
-        "offset": offset,
-        "currency": ctx["currency_code"],
-        "by_category": [{"category": k, "amount": round(v, 2)} for k, v in sorted(by_cat.items(), key=lambda kv: -kv[1])],
-    }
-
-
-@api.post("/expenses")
-async def create_expense(body: ExpenseIn, user: dict = Depends(get_current_user)):
-    ctx = country_ctx(user)
-    exp = {
-        "id": new_id(), "owner_id": user["user_id"],
-        "vendor": body.vendor.strip(), "date": body.date or today_str(),
-        "amount": float(body.amount or 0), "currency": (body.currency or ctx["currency_code"]).strip(),
-        "category": body.category or "other", "items": body.items or [],
-        "summary": body.summary.strip(), "attachment": None, "source": "manual",
-        "project_id": body.project_id or None,
-        "created_at": now_iso(),
-    }
-    await db.expenses.insert_one({**exp})
-    exp.pop("_id", None)
-    return exp
-
-
-@api.post("/expenses/upload-receipt")
-async def upload_receipt(
-    file: UploadFile = File(...),
-    project_id: Optional[str] = Form(None),
-    user: dict = Depends(get_current_user),
-):
-    """Upload a receipt image/PDF; AI parses vendor + amount + items; saves as expense.
-
-    Mirrors the Telegram receipt flow so users can drop receipts straight from the
-    web app instead of forwarding to Telegram.
-    """
-    await rate_limit(f"receipt:{user['user_id']}", limit=20, window_seconds=60)
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Empty file")
-    if len(data) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Receipt too large (20MB max)")
-    ct = (file.content_type or "").lower()
-    fname = file.filename or "receipt"
-    is_image = ct.startswith("image/") or any(fname.lower().endswith(x) for x in (".jpg", ".jpeg", ".png", ".webp", ".heic"))
-    is_pdf = ct == "application/pdf" or fname.lower().endswith(".pdf")
-    if not (is_image or is_pdf):
-        raise HTTPException(status_code=415, detail="Please upload a photo (JPG/PNG) or PDF of the receipt.")
-
-    # 1) Store the file so we can attach it to the expense.
-    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ("jpg" if is_image else "pdf")
-    path = f"{APP_NAME}/receipts/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
-    stored = await asyncio.to_thread(put_object, path, data, ct or ("image/jpeg" if is_image else "application/pdf"))
-    file_rec = {
-        "id": new_id(), "owner_id": user["user_id"], "path": stored["path"],
-        "filename": fname, "content_type": ct or ("image/jpeg" if is_image else "application/pdf"),
-        "size": stored.get("size", len(data)),
-        "extracted_text": extract_text(data, ct, fname) if is_pdf else "",
-        "is_deleted": False, "created_at": now_iso(),
-    }
-    await db.files.insert_one({**file_rec})
-
-    # 2) Ask the vision model to parse the receipt.
-    parsed: Dict[str, Any] = {}
-    try:
-        if is_image:
-            b64 = base64.b64encode(data).decode()
-            parsed = await ai_json(
-                RECEIPT_SYSTEM, "Extract this receipt.",
-                images=[ImageContent(image_base64=b64)],
-                provider="openai", model="gpt-4o",
-            )
-        else:
-            text = file_rec.get("extracted_text") or ""
-            if not text.strip():
-                raise HTTPException(status_code=422, detail="Couldn't read any text from that PDF. Try a clearer scan or photo.")
-            parsed = await ai_json(
-                RECEIPT_SYSTEM, f"Receipt text:\n{text[:5000]}",
-                provider="openai", model="gpt-4o",
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"receipt parse failed: {e}")
-        parsed = {}
-
-    amount = float(parsed.get("total_amount") or 0)
-    ctx = country_ctx(user)
-    att = {"path": file_rec["path"], "filename": file_rec["filename"], "content_type": file_rec["content_type"], "size": file_rec["size"]}
-    exp = {
-        "id": new_id(), "owner_id": user["user_id"],
-        "vendor": (parsed.get("vendor") or "").strip(),
-        "date": parsed.get("date") or today_str(),
-        "amount": amount,
-        "currency": (parsed.get("currency") or ctx["currency_code"]).strip(),
-        "category": parsed.get("category") or "other",
-        "items": parsed.get("items") or [],
-        "summary": (parsed.get("summary") or "").strip(),
-        "attachment": att,
-        "source": "web_upload",
-        "project_id": project_id or None,
-        "created_at": now_iso(),
-    }
-    await db.expenses.insert_one({**exp})
-    exp.pop("_id", None)
-    # Also drop into org knowledge so /help & search find it.
-    await db.knowledge.insert_one({
-        "id": new_id(), "owner_id": user["user_id"],
-        "title": f"Receipt — {exp['vendor'] or 'unknown vendor'} ({money_str(amount, user)})",
-        "content": exp["summary"] or f"Receipt of {money_str(amount, user)} — category {exp['category']}.",
-        "project_id": exp["project_id"], "tags": ["receipt", "expense", "web"],
-        "attachment": att, "created_at": now_iso(),
-    })
-    return {"expense": exp, "parsed": bool(parsed.get("total_amount"))}
-
-
-@api.delete("/expenses/{expense_id}")
-async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)):
-    result = await db.expenses.delete_one({"id": expense_id, "owner_id": user["user_id"]})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Expense not found")
-    return {"deleted": True}
-
+# Moved to routes/expenses.py. ExpenseIn re-exported below for Telegram
+# handler that constructs expense records directly.
+from routes.expenses import ExpenseIn  # noqa: F401 (used by Telegram receipt path)
 
 # ---------------------------------------------------------------- cost trends
-# Aggregates cost across three streams (expenses, labour wages, subcontractor
-# payments) into a single time-bucketed view + budget vs actual per project.
-
-_LABOUR_COST_TYPES = ["wage", "bonus"]  # accrued labour cost
-_SUB_COST_TYPES = ["payment", "advance", "extra_work"]  # sub cash-out to project
-
-
-def _bucket_key(date_str: str, period: str) -> Optional[tuple[str, str]]:
-    """Returns (sort_key, label) for a YYYY-MM-DD date. None if unparseable."""
-    if not date_str or len(date_str) < 7:
-        return None
-    try:
-        dt = datetime.fromisoformat(date_str[:10])
-    except Exception:
-        return None
-    if period == "week":
-        iso_year, iso_week, _ = dt.isocalendar()
-        return f"{iso_year}-W{iso_week:02d}", f"W{iso_week} {iso_year}"
-    if period == "quarter":
-        q = (dt.month - 1) // 3 + 1
-        return f"{dt.year}-Q{q}", f"Q{q} {dt.year}"
-    if period == "year":
-        return f"{dt.year}", f"{dt.year}"
-    # default: month
-    month_label = dt.strftime("%b %Y")
-    return f"{dt.year}-{dt.month:02d}", month_label
-
-
-@api.get("/cost-trends")
-async def cost_trends(
-    period: str = "month",
-    project_id: str = "",
-    user: dict = Depends(get_current_user),
-):
-    period = period if period in ("week", "month", "quarter", "year") else "month"
-    uid = user["user_id"]
-    ctx = country_ctx(user)
-
-    # Load lookup collections once.
-    workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(5000)
-    worker_project = {w["id"]: w.get("project_id") for w in workers}
-    subs = await db.subcontractors.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
-    sub_project = {s["id"]: s.get("project_id") for s in subs}
-    projects = await db.projects.find({"owner_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(500)
-
-    pid_filter = project_id or None
-
-    # ---- Stream 1: expenses (already have project_id + date + amount).
-    exp_query: Dict[str, Any] = {"owner_id": uid}
-    if pid_filter:
-        exp_query["project_id"] = pid_filter
-    expenses = await db.expenses.find(exp_query, {"_id": 0}).to_list(5000)
-
-    # ---- Stream 2: labour cost = worker transactions of type wage/bonus.
-    txn_query: Dict[str, Any] = {"owner_id": uid, "type": {"$in": _LABOUR_COST_TYPES}}
-    txns = await db.transactions.find(txn_query, {"_id": 0}).to_list(20000)
-    if pid_filter:
-        txns = [t for t in txns if worker_project.get(t.get("worker_id")) == pid_filter]
-
-    # ---- Stream 3: subcontractor cost = sub_transactions of cost types.
-    sub_query: Dict[str, Any] = {"owner_id": uid, "type": {"$in": _SUB_COST_TYPES}}
-    sub_txns = await db.sub_transactions.find(sub_query, {"_id": 0}).to_list(20000)
-    if pid_filter:
-        sub_txns = [t for t in sub_txns if sub_project.get(t.get("sub_id")) == pid_filter]
-
-    # ---- Bucket every stream by period.
-    buckets: Dict[str, Dict[str, Any]] = {}
-
-    def _add(bkt: Optional[tuple[str, str]], field: str, amt: float):
-        if not bkt:
-            return
-        key, label = bkt
-        b = buckets.setdefault(key, {"key": key, "label": label, "expenses": 0.0, "labour": 0.0, "subs": 0.0})
-        b[field] += float(amt or 0)
-
-    for e in expenses:
-        _add(_bucket_key(e.get("date") or "", period), "expenses", e.get("amount") or 0)
-    for t in txns:
-        _add(_bucket_key(t.get("date") or "", period), "labour", t.get("amount") or 0)
-    for t in sub_txns:
-        _add(_bucket_key(t.get("date") or "", period), "subs", t.get("amount") or 0)
-
-    ordered = sorted(buckets.values(), key=lambda b: b["key"])
-    for b in ordered:
-        b["expenses"] = round(b["expenses"], 2)
-        b["labour"] = round(b["labour"], 2)
-        b["subs"] = round(b["subs"], 2)
-        b["total"] = round(b["expenses"] + b["labour"] + b["subs"], 2)
-
-    # ---- Budget vs Actual per project (independent of period filter).
-    # Actual = all-time cost across the three streams for that project.
-    all_expenses = await db.expenses.find({"owner_id": uid}, {"_id": 0}).to_list(5000)
-    all_txns_labour = await db.transactions.find({"owner_id": uid, "type": {"$in": _LABOUR_COST_TYPES}}, {"_id": 0}).to_list(20000)
-    all_sub_txns = await db.sub_transactions.find({"owner_id": uid, "type": {"$in": _SUB_COST_TYPES}}, {"_id": 0}).to_list(20000)
-
-    per_project: Dict[str, Dict[str, float]] = {}
-    for p in projects:
-        per_project[p["id"]] = {"expenses": 0.0, "labour": 0.0, "subs": 0.0}
-    unassigned = {"expenses": 0.0, "labour": 0.0, "subs": 0.0}
-
-    def _accum(pid: Optional[str], field: str, amt: float):
-        if pid and pid in per_project:
-            per_project[pid][field] += float(amt or 0)
-        else:
-            unassigned[field] += float(amt or 0)
-
-    for e in all_expenses:
-        _accum(e.get("project_id"), "expenses", e.get("amount") or 0)
-    for t in all_txns_labour:
-        _accum(worker_project.get(t.get("worker_id")), "labour", t.get("amount") or 0)
-    for t in all_sub_txns:
-        _accum(sub_project.get(t.get("sub_id")), "subs", t.get("amount") or 0)
-
-    project_rows = []
-    total_budget = 0.0
-    total_actual = 0.0
-    for p in projects:
-        pid = p["id"]
-        parts = per_project[pid]
-        actual = round(parts["expenses"] + parts["labour"] + parts["subs"], 2)
-        budget = float(p.get("budget") or 0)
-        raw_pct = (actual / budget) * 100 if budget > 0 else 0
-        pct = round(raw_pct, 1)
-        remaining = round(budget - actual, 2) if budget > 0 else 0
-        # Classify from raw (unrounded) percent so boundary values (e.g. 79.95)
-        # don't flip status because of display rounding.
-        status = "no_budget" if budget <= 0 else ("over" if raw_pct > 100 else ("warn" if raw_pct >= 80 else "ok"))
-        project_rows.append({
-            "id": pid, "name": p.get("name") or "Untitled",
-            "budget": round(budget, 2), "actual": actual, "remaining": remaining, "percent": pct,
-            "expenses": round(parts["expenses"], 2), "labour": round(parts["labour"], 2), "subs": round(parts["subs"], 2),
-            "status": status,
-        })
-        total_budget += budget
-        total_actual += actual
-
-    unassigned_total = round(unassigned["expenses"] + unassigned["labour"] + unassigned["subs"], 2)
-
-    overall = {
-        "budget": round(total_budget, 2),
-        "actual": round(total_actual, 2),
-        "unassigned": unassigned_total,
-        "percent": round((total_actual / total_budget) * 100, 1) if total_budget > 0 else 0,
-    }
-
-    return {
-        "period": period,
-        "project_id": pid_filter,
-        "buckets": ordered,
-        "projects": project_rows,
-        "overall": overall,
-        "currency": ctx["currency_code"],
-        "has_data": len(ordered) > 0 or total_actual > 0,
-    }
-
+# Moved to routes/cost_trends.py
 
 # ---------------------------------------------------------------- app wiring
 
@@ -3557,97 +3116,6 @@ async def help_ask(body: HelpAskIn, user: dict = Depends(get_current_user)):
     return {"answer": answer, "lang": lang}
 
 
-# ---------------------------------------------------------------- contact & company
-class ContactIn(BaseModel):
-    name: str = ""
-    email: str = ""
-    phone: str = ""
-    company: str = ""
-    subject: str = ""
-    message: str = ""
-
-
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-@api.get("/company-info")
-async def company_info():
-    """Public: legal + support info displayed on the Contact Us page and footer."""
-    return {
-        "legal_name": COMPANY_LEGAL_NAME,
-        "product_name": APP_NAME,
-        "support_email": CONTACT_EMAIL,
-        "website": "https://karyaai.app",
-    }
-
-
-@api.post("/contact")
-async def submit_contact(body: ContactIn, request: Request):
-    """Public form — validates input, saves the submission, and quietly delivers
-    it to the Karya ops-owner via Telegram (chat_id resolved server-side; the
-    recipient's handle is never exposed to clients)."""
-    await rate_limit(f"contact:{request.client.host if request.client else 'anon'}", limit=5, window_seconds=300)
-    name = (body.name or "").strip()[:120]
-    email = (body.email or "").strip()[:120]
-    phone = (body.phone or "").strip()[:40]
-    company = (body.company or "").strip()[:120]
-    subject = (body.subject or "").strip()[:200]
-    message = (body.message or "").strip()[:5000]
-    if not name:
-        raise HTTPException(status_code=400, detail="Please enter your name.")
-    if not email or not _EMAIL_RE.match(email):
-        raise HTTPException(status_code=400, detail="Enter a valid email address.")
-    if len(message) < 10:
-        raise HTTPException(status_code=400, detail="Please share a bit more detail (at least 10 characters).")
-    submission = {
-        "id": new_id(),
-        "name": name, "email": email, "phone": phone, "company": company,
-        "subject": subject or "Contact form submission",
-        "message": message,
-        "source_ip": (request.client.host if request.client else "") or "",
-        "user_agent": request.headers.get("user-agent", "")[:300],
-        "status": "new",
-        "delivered_via": [],
-        "created_at": now_iso(),
-    }
-    await db.contact_submissions.insert_one({**submission})
-
-    # Attempt Telegram delivery to the cached ops-owner chat_id.
-    delivered = []
-    try:
-        chat_id: Optional[int] = None
-        cached = await db.system_config.find_one({"key": "contact_chat_id"})
-        if cached and cached.get("value"):
-            try:
-                chat_id = int(cached["value"])
-            except (TypeError, ValueError):
-                chat_id = None
-        if chat_id and _tg_configured():
-            text = (
-                "📮 <b>New contact form submission</b>\n\n"
-                f"<b>Name:</b> {html.escape(name)}\n"
-                f"<b>Email:</b> {html.escape(email)}\n"
-                + (f"<b>Phone:</b> {html.escape(phone)}\n" if phone else "")
-                + (f"<b>Company:</b> {html.escape(company)}\n" if company else "")
-                + f"<b>Subject:</b> {html.escape(subject or '—')}\n\n"
-                f"<b>Message:</b>\n{html.escape(message)[:3500]}"
-            )
-            tok = _TG_USER_LANG.set("en")  # never translate an internal ops alert
-            try:
-                await tg_send(chat_id, text)
-            finally:
-                _TG_USER_LANG.reset(tok)
-            delivered.append("telegram")
-    except Exception as e:
-        logger.warning(f"contact telegram delivery failed: {e}")
-
-    if delivered:
-        await db.contact_submissions.update_one(
-            {"id": submission["id"]}, {"$set": {"delivered_via": delivered, "delivered_at": now_iso()}}
-        )
-    return {"ok": True, "id": submission["id"]}
-
-
 # ---- proactive telegram pings ------------------------------------------------
 # User-configurable morning briefing / compliance-deadline / payroll-reminder
 # nudges sent via the linked Telegram bot. Runs as an in-process asyncio loop
@@ -3679,59 +3147,14 @@ def _notifications_for(user: dict) -> Dict[str, Any]:
 
 
 class NotificationsIn(BaseModel):
+    # Kept as a re-export marker; the model + endpoints live in routes/telegram_prefs.py.
     timezone: Optional[str] = None
     morning_briefing: Optional[Dict[str, Any]] = None
     compliance_alerts: Optional[Dict[str, Any]] = None
     payroll_reminder: Optional[Dict[str, Any]] = None
 
 
-@api.get("/telegram/notifications")
-async def get_notifications(user: dict = Depends(get_current_user)):
-    return {"notifications": _notifications_for(user), "telegram_linked": bool(user.get("telegram_chat_id"))}
-
-
-@api.put("/telegram/notifications")
-async def update_notifications(body: NotificationsIn, user: dict = Depends(get_current_user)):
-    # Validate the timezone if provided; fall back to default when invalid.
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-    patch: Dict[str, Any] = {}
-    if body.timezone is not None:
-        tz = (body.timezone or "").strip()
-        try:
-            ZoneInfo(tz)
-            patch["timezone"] = tz
-        except (ZoneInfoNotFoundError, Exception):
-            raise HTTPException(status_code=400, detail=f"Unknown timezone '{tz}'")
-    for key in ("morning_briefing", "compliance_alerts", "payroll_reminder"):
-        raw = getattr(body, key)
-        if raw is None:
-            continue
-        clean: Dict[str, Any] = {}
-        if "enabled" in raw:
-            clean["enabled"] = bool(raw["enabled"])
-        if "time" in raw and raw["time"] is not None:
-            t = (str(raw["time"]) or "").strip()
-            if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", t):
-                raise HTTPException(status_code=400, detail=f"Invalid time '{t}' for {key} (expected HH:MM 24-hour)")
-            clean["time"] = t
-        if "days" in raw and raw["days"] is not None:
-            days = [int(d) for d in raw["days"] if isinstance(d, (int, float)) or (isinstance(d, str) and d.isdigit())]
-            days = sorted({d for d in days if 1 <= d <= 7})
-            clean["days"] = days
-        patch[key] = clean
-    if not patch:
-        return {"notifications": _notifications_for(user)}
-    # Merge into user.notifications atomically (preserve untouched keys).
-    existing = user.get("notifications") or {}
-    merged = {**existing}
-    for k, v in patch.items():
-        if k == "timezone":
-            merged["timezone"] = v
-        else:
-            merged[k] = {**(existing.get(k) or {}), **v}
-    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"notifications": merged}})
-    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
-    return {"notifications": _notifications_for(fresh), "telegram_linked": bool(fresh.get("telegram_chat_id"))}
+# GET/PUT /telegram/notifications moved to routes/telegram_prefs.py
 
 
 async def _ping_already_sent(uid: str, ping_type: str, day_key: str) -> bool:
@@ -3964,6 +3387,54 @@ api.include_router(_build_reports_router(_ReportsDeps(
     build_signed_file_url=build_signed_file_url,
     backend_public_url=BACKEND_PUBLIC_URL,
     logger=logger,
+)))
+
+from routes.contact import build_router as _build_contact_router, Deps as _ContactDeps
+api.include_router(_build_contact_router(_ContactDeps(
+    db=db,
+    new_id=new_id,
+    now_iso=now_iso,
+    rate_limit=rate_limit,
+    tg_configured=_tg_configured,
+    tg_send=tg_send,
+    tg_user_lang=_TG_USER_LANG,
+    company_legal_name=COMPANY_LEGAL_NAME,
+    app_name=APP_NAME,
+    contact_email=CONTACT_EMAIL,
+    website="https://karyaai.app",
+    logger=logger,
+)))
+
+from routes.attendance import build_router as _build_attendance_router
+api.include_router(_build_attendance_router(_attendance_deps()))
+
+from routes.cost_trends import build_router as _build_cost_trends_router, Deps as _CostTrendsDeps
+api.include_router(_build_cost_trends_router(_CostTrendsDeps(
+    db=db, get_current_user=get_current_user, country_ctx=country_ctx,
+)))
+
+from routes.expenses import build_router as _build_expenses_router, Deps as _ExpensesDeps
+api.include_router(_build_expenses_router(_ExpensesDeps(
+    db=db,
+    get_current_user=get_current_user,
+    new_id=new_id,
+    now_iso=now_iso,
+    today_str=today_str,
+    country_ctx=country_ctx,
+    money_str=money_str,
+    rate_limit=rate_limit,
+    put_object=put_object,
+    extract_text=extract_text,
+    ai_json=ai_json,
+    image_content_cls=ImageContent,
+    receipt_system=RECEIPT_SYSTEM,
+    app_name=APP_NAME,
+    logger=logger,
+)))
+
+from routes.telegram_prefs import build_router as _build_tg_prefs_router, Deps as _TgPrefsDeps
+api.include_router(_build_tg_prefs_router(_TgPrefsDeps(
+    db=db, get_current_user=get_current_user, notifications_for=_notifications_for,
 )))
 
 app.include_router(api)
