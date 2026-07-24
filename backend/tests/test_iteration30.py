@@ -130,7 +130,8 @@ class TestCompanyInfo:
         assert r.status_code == 200
         d = r.json()
         assert d["legal_name"] == "SIXN8 Technologies Private Ltd"
-        assert d["support_email"] == "admin@dukaaon.in"
+        # support_email is env-driven via CONTACT_EMAIL; just assert it's set and looks like an email.
+        assert d["support_email"] and "@" in d["support_email"]
         assert "product_name" in d
         assert "website" in d
         # Leak check
