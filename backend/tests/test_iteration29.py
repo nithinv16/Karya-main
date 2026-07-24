@@ -259,16 +259,17 @@ class TestSecurityHeaders:
         assert "strict-origin-when-cross-origin" in r.headers["Referrer-Policy"].lower()
 
     def test_cors_via_asgi_app(self):
-        """CORS is enforced at the FastAPI middleware level, but the preview
-        ingress overrides access-control-allow-origin to '*' for all
-        responses. Test the app-level config directly via the ASGI app.
+        """CORS: iter31 widened CORS_ORIGINS to '*' for deploy compatibility.
+        In wildcard mode we intentionally reflect '*' for any Origin AND drop
+        allow-credentials. In non-wildcard mode we use a strict allowlist.
         """
+        import os
         import sys
         sys.path.insert(0, "/app/backend")
         from starlette.testclient import TestClient
         from server import app
         c = TestClient(app)
-        # Evil origin — should NOT be echoed
+        wildcard = "*" in (os.environ.get("CORS_ORIGINS") or "")
         r = c.options(
             "/api/auth/me",
             headers={
@@ -277,17 +278,20 @@ class TestSecurityHeaders:
             },
         )
         aco = r.headers.get("access-control-allow-origin", "")
-        assert aco != "https://evil.example.com", f"leaked: {aco}"
-        assert aco != "*", "wildcard leaked from app"
-        # Allowed origin (regex) — must be echoed
-        r2 = c.options(
-            "/api/auth/me",
-            headers={
-                "Origin": "https://karyaai.app",
-                "Access-Control-Request-Method": "GET",
-            },
-        )
-        assert r2.headers.get("access-control-allow-origin") == "https://karyaai.app"
+        if wildcard:
+            assert aco == "*", f"expected wildcard, got {aco!r}"
+            assert "access-control-allow-credentials" not in {k.lower() for k in r.headers.keys()}
+        else:
+            assert aco != "https://evil.example.com", f"leaked: {aco}"
+            assert aco != "*", "wildcard leaked from app"
+            r2 = c.options(
+                "/api/auth/me",
+                headers={
+                    "Origin": "https://karyaai.app",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            assert r2.headers.get("access-control-allow-origin") == "https://karyaai.app"
 
 
 # ---------------------------------------------------------------- 7. Payload size guard

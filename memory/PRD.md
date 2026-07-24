@@ -160,3 +160,18 @@ Testing: `iteration_30.json` — **20/20 backend + 3/3 frontend flows pass**, ze
 
 
 
+
+
+## Iteration 32 (2026-07) — server.py extraction + N+1 fixes
+1. **Routes extracted** into `backend/routes/*` — each module exposes a `Deps` dataclass + `build_router(deps)` factory:
+   - `routes/contact.py` — `/company-info` + `/contact`.
+   - `routes/attendance.py` — 5 endpoints + reusable `mark_attendance_core` / `headcount_attendance_core` helpers that the Telegram `/attendance` handler still calls via shims in server.py.
+   - `routes/cost_trends.py` — `/cost-trends`.
+   - `routes/expenses.py` — list/create/upload-receipt/delete.
+   - `routes/telegram_prefs.py` — GET/PUT `/telegram/notifications`.
+   Result: `backend/server.py` dropped from **4063 → 3525 lines** (~13% reduction). "<2000 lines" not fully achieved because the Telegram webhook + ping scheduler (~950 lines combined) intentionally left in place — extracting them safely needs a follow-up session (ContextVars, callbacks, startup lifecycle are tangled).
+2. **N+1 query fixes** in `list_subs` and `_assistant_answer`: replaced per-sub `db.sub_transactions.find` with a single `$in` bulk query.
+3. **Test alignment** — `test_iteration29.py::test_cors_via_asgi_app` now branches on `CORS_ORIGINS==*` wildcard mode.
+
+Testing: iteration_32.json — 23/23 refactor tests pass, 100% success on new suite.
+
