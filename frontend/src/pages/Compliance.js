@@ -152,6 +152,8 @@ export default function Compliance() {
     setRenewalActive({ ...item, renewal_plan: newPlan });
   };
 
+  // daysUntil is a pure module-scope function — not a reactive dependency.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const sortedItems = useMemo(() => {
     const arr = [...(items || [])];
     return arr.sort((a, b) => {

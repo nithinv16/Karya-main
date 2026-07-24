@@ -57,7 +57,7 @@ export default function AIAssistant({ open, onClose }) {
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div key={m.role + '-' + i + '-' + (m.text || '').slice(0, 20)} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
               <div
                 className={`max-w-[85%] px-4 py-3 text-sm whitespace-pre-wrap border ${
                   m.role === "user"

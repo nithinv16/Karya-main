@@ -267,7 +267,7 @@ export default function DailyReports() {
               {active.content?.work_completed?.length > 0 && (
                 <Section icon={ListChecks} title="Work Completed">
                   <ol className="space-y-2">{active.content.work_completed.map((s, i) => (
-                    <li key={i} className="flex gap-3"><span className="font-mono font-bold text-[#EA580C] shrink-0">{String(i + 1).padStart(2, "0")}</span><span className="text-[#3f3f46]">{s}</span></li>
+                    <li key={'work-' + i + '-' + s.slice(0, 15)} className="flex gap-3"><span className="font-mono font-bold text-[#EA580C] shrink-0">{String(i + 1).padStart(2, "0")}</span><span className="text-[#3f3f46]">{s}</span></li>
                   ))}</ol>
                 </Section>
               )}
@@ -333,7 +333,7 @@ const Section = ({ icon: Icon, title, children }) => (
     {children}
   </div>
 );
-const BulletList = ({ items }) => <ul className="list-disc pl-5 space-y-1 text-[#3f3f46]">{items.map((it, i) => <li key={i}>{it}</li>)}</ul>;
+const BulletList = ({ items }) => <ul className="list-disc pl-5 space-y-1 text-[#3f3f46]">{items.map((it, i) => <li key={'item-' + i + '-' + it.slice(0, 15)}>{it}</li>)}</ul>;
 
 function buildReportPlaintext(r) {
   const c = r?.content || {};

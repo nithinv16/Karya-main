@@ -108,7 +108,7 @@ export default function Insights() {
           ) : cards.length > 0 ? (
             <ul className="space-y-3" data-testid="ai-briefing">
               {cards.map((c, i) => (
-                <li key={i} className="flex gap-2 text-sm text-[#3f3f46]">
+                <li key={'briefing-' + i + '-' + c.slice(0, 15)} className="flex gap-2 text-sm text-[#3f3f46]">
                   <Warning size={15} weight="bold" className="text-[#EA580C] mt-0.5 shrink-0" />
                   <span>{c}</span>
                 </li>

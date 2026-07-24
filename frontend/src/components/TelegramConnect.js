@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { PaperPlaneTilt, LinkSimple, LinkBreak, CopySimple, CheckCircle } from "@phosphor-icons/react";
@@ -8,21 +8,23 @@ export default function TelegramConnect() {
   const [code, setCode] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const res = await api.get("/telegram/status");
       setStatus(res.data);
       if (res.data.linked) setCode(null);
-    } catch {}
-  };
+    } catch (err) {
+      if (process.env.NODE_ENV !== "production") console.warn("Telegram status check failed:", err);
+    }
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
     if (!code || status?.linked) return;
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
-  }, [code, status?.linked]);
+  }, [code, status?.linked, load]);
 
   const generate = async () => {
     setBusy(true);

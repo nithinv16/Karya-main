@@ -62,12 +62,12 @@ export default function CostTrendsPanel({ projectId: lockedProjectId = null, den
     enabled: !lockedProjectId,
   });
 
-  const allBuckets = data?.buckets || [];
   const buckets = useMemo(() => {
+    const allBuckets = data?.buckets || [];
     const r = RANGES.find((x) => x.key === range);
     if (!r || !r.n) return allBuckets;
     return allBuckets.slice(-r.n);
-  }, [allBuckets, range]);
+  }, [data?.buckets, range]);
 
   const totalWindow = buckets.reduce((s, b) => s + (b.total || 0), 0);
   const avgPerPeriod = buckets.length ? totalWindow / buckets.length : 0;
@@ -84,8 +84,8 @@ export default function CostTrendsPanel({ projectId: lockedProjectId = null, den
     [buckets, budgetPerPeriod]
   );
 
-  const projectRows = data?.projects || [];
   const budgetChartData = useMemo(() => {
+    const projectRows = data?.projects || [];
     return projectRows.map((p) => ({
       name: p.name.length > 18 ? p.name.slice(0, 17) + "…" : p.name,
       fullName: p.name,
@@ -94,8 +94,9 @@ export default function CostTrendsPanel({ projectId: lockedProjectId = null, den
       status: p.status,
       percent: p.percent,
     }));
-  }, [projectRows]);
+  }, [data?.projects]);
 
+  const projectRows = data?.projects || [];
   const overall = data?.overall || { budget: 0, actual: 0, percent: 0, unassigned: 0 };
   const overBudget = projectRows.filter((p) => p.status === "over");
   const nearBudget = projectRows.filter((p) => p.status === "warn");
@@ -317,7 +318,7 @@ export default function CostTrendsPanel({ projectId: lockedProjectId = null, den
                     <Bar dataKey="budget" fill="#E4E4E7" name="Budget" radius={[0, 2, 2, 0]} />
                     <Bar dataKey="actual" name="Actual" radius={[0, 2, 2, 0]}>
                       {budgetChartData.map((row, i) => (
-                        <Cell key={i} fill={row.status === "over" ? "#DC2626" : row.status === "warn" ? "#F59E0B" : "#EA580C"} />
+                        <Cell key={row.name || ('cell-' + i)} fill={row.status === "over" ? "#DC2626" : row.status === "warn" ? "#F59E0B" : "#EA580C"} />
                       ))}
                     </Bar>
                   </BarChart>

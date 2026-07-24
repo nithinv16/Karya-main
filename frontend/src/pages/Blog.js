@@ -29,6 +29,7 @@ export function BlogIndex() {
           </Link>
           <nav className="flex items-center gap-5 text-sm">
             <Link to="/blog" className="font-semibold text-[#09090B]">Blog</Link>
+            <Link to="/pricing" className="text-[#71717A] hover:text-[#09090B]">Pricing</Link>
             <a href="https://t.me/karya_ops_bot" target="_blank" rel="noopener noreferrer" className="text-[#71717A] hover:text-[#09090B]">Telegram bot</a>
             <Link to="/" className="bg-[#EA580C] text-white px-4 py-2 font-semibold hover:bg-[#C2410C] transition-colors">
               Sign in
@@ -133,6 +134,7 @@ export function BlogPost() {
           </Link>
           <nav className="flex items-center gap-5 text-sm">
             <Link to="/blog" className="text-[#71717A] hover:text-[#09090B]">Blog</Link>
+            <Link to="/pricing" className="text-[#71717A] hover:text-[#09090B]">Pricing</Link>
             <Link to="/" className="bg-[#EA580C] text-white px-4 py-2 font-semibold hover:bg-[#C2410C] transition-colors">
               Sign in
             </Link>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
@@ -12,17 +12,18 @@ export default function PhoneVerify() {
   const [step, setStep] = useState("idle"); // idle | sent | done
   const [busy, setBusy] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const res = await api.get("/profile/phone/verify/status");
       setStatus(res.data);
       setPhone(res.data.phone || user?.phone || "");
     } catch (e) {
-      /* status stays null, section renders nothing */
+      // Status stays null, section renders nothing.
+      if (process.env.NODE_ENV !== "production") console.warn("Phone verify status failed:", e);
     }
-  };
+  }, [user?.phone]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const startVerify = async () => {
     if (!phone.trim()) { toast.error("Enter your phone number"); return; }

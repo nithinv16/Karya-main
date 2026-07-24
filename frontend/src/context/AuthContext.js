@@ -8,6 +8,8 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // api, getToken, setToken are module-level imports — stable across renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const checkAuth = useCallback(async () => {
     if (!getToken()) {
       setUser(null);
@@ -40,7 +42,7 @@ export const AuthProvider = ({ children }) => {
       await api.post("/auth/logout");
     } catch (err) {
       // Server-side logout is best-effort; local session is cleared regardless.
-      console.warn("Logout request failed:", err?.message || err);
+      if (process.env.NODE_ENV !== "production") console.warn("Logout request failed:", err?.message || err);
     }
     setToken(null);
     setUser(null);

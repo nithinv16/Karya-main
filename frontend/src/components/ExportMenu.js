@@ -34,7 +34,7 @@ export default function ExportMenu({ endpoint, filename = "export", label = "Exp
       setTimeout(() => URL.revokeObjectURL(url), 3000);
       toast.success(`${fmt.toUpperCase()} ready`);
     } catch (e) {
-      console.error("Export failed:", e);
+      if (process.env.NODE_ENV !== "production") console.error("Export failed:", e);
       // With responseType:'blob', error responses arrive as blobs — decode JSON if possible.
       let detail = "server error";
       const blob = e?.response?.data;

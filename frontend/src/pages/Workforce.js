@@ -8,6 +8,96 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { formatMoney, getCountry } from "@/lib/country";
 import CostTrendsPanel from "@/components/CostTrendsPanel";
+function Swipeable({ children, onSwipeLeft, threshold = 80 }) {
+  const [translationX, setTranslationX] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const touchStart = React.useRef({ x: 0, y: 0 });
+  const isHorizontal = React.useRef(null);
+
+  const handleTouchStart = (e) => {
+    touchStart.current = {
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+    };
+    setIsSwiping(true);
+    isHorizontal.current = null;
+  };
+
+  const handleTouchMove = (e) => {
+    if (!isSwiping) return;
+
+    const currentX = e.touches[0].clientX;
+    const currentY = e.touches[0].clientY;
+
+    const diffX = currentX - touchStart.current.x;
+    const diffY = currentY - touchStart.current.y;
+
+    if (isHorizontal.current === null) {
+      isHorizontal.current = Math.abs(diffX) > Math.abs(diffY);
+    }
+
+    if (!isHorizontal.current) {
+      setIsSwiping(false);
+      setTranslationX(0);
+      return;
+    }
+
+    if (e.cancelable) {
+      e.preventDefault();
+    }
+
+    if (diffX < 0) {
+      setTranslationX(diffX);
+    } else {
+      setTranslationX(0);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsSwiping(false);
+    if (translationX < -threshold) {
+      setTranslationX(-window.innerWidth);
+      setTimeout(() => {
+        onSwipeLeft();
+        setTranslationX(0);
+      }, 200);
+    } else {
+      setTranslationX(0);
+    }
+    isHorizontal.current = null;
+  };
+
+  return (
+    <div className="relative overflow-hidden w-full">
+      <div 
+        className="absolute inset-0 flex items-center justify-end bg-[#DC2626] text-white px-6 select-none"
+        style={{
+          opacity: translationX < 0 ? 1 : 0,
+          transition: "opacity 0.15s ease",
+        }}
+      >
+        <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider">
+          <Trash size={18} weight="bold" />
+          <span>Delete</span>
+        </div>
+      </div>
+
+      <div
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        style={{
+          transform: `translateX(${translationX}px)`,
+          transition: isSwiping ? "none" : "transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+        }}
+        className="relative w-full bg-white touch-pan-y"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 
 const ONBOARDING = [
   { key: "id_collected", label: "ID / Aadhaar collected" },
@@ -227,43 +317,82 @@ export default function Workforce() {
           <p className="text-[#71717A] text-sm">No workers yet. Add your first worker to start tracking attendance and wages.</p>
         </div>
       ) : (
-        <div className="border border-[#E4E4E7] overflow-x-auto" data-testid="workers-table">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#E4E4E7] text-left">
-                {["Name", "Trade", "Rate", "Project", "Onboarding", ""].map((h) => (
-                  <th key={h} className="overline px-4 py-3 font-bold">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {workers?.map((w) => (
-                <tr key={w.id} data-testid={`worker-row-${w.id}`} className="border-b border-[#E4E4E7] hover:bg-[#FFF7ED] transition-colors duration-200">
-                  <td className="px-4 py-3 font-semibold">{w.name}</td>
-                  <td className="px-4 py-3 text-[#71717A]">{w.role}</td>
-                  <td className="px-4 py-3 font-mono">{fmt(w.rate)} <span className="text-[#71717A]">/{w.rate_type}</span></td>
-                  <td className="px-4 py-3"><Badge tone="accent">{pname(w.project_id)}</Badge></td>
-                  <td className="px-4 py-3">
-                    <button
-                      data-testid={`onboarding-btn-${w.id}`}
-                      onClick={() => openOnboarding(w)}
-                      className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs font-bold border transition-colors duration-200 ${
-                        obCount(w) === ONBOARDING.length
-                          ? "bg-[#F0FDF4] text-[#16A34A] border-[#16A34A]/30"
-                          : "bg-[#FEF2F2] text-[#DC2626] border-[#DC2626]/30 hover:bg-[#DC2626] hover:text-white"
-                      }`}
-                    >
-                      <ShieldCheck size={13} weight="bold" /> {obCount(w)}/{ONBOARDING.length}
-                    </button>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button data-testid={`delete-worker-${w.id}`} onClick={() => del.mutate(w.id)} className="text-[#71717A] hover:text-[#DC2626] transition-colors duration-200"><Trash size={16} weight="bold" /></button>
-                  </td>
+        <>
+          {/* Desktop View: Table */}
+          <div className="hidden md:block border border-[#E4E4E7] overflow-x-auto" data-testid="workers-table">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#E4E4E7] text-left">
+                  {["Name", "Trade", "Rate", "Project", "Onboarding", ""].map((h) => (
+                    <th key={h} className="overline px-4 py-3 font-bold">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {workers?.map((w) => (
+                  <tr key={w.id} data-testid={`worker-row-${w.id}`} className="border-b border-[#E4E4E7] hover:bg-[#FFF7ED] transition-colors duration-200">
+                    <td className="px-4 py-3 font-semibold">{w.name}</td>
+                    <td className="px-4 py-3 text-[#71717A]">{w.role}</td>
+                    <td className="px-4 py-3 font-mono">{fmt(w.rate)} <span className="text-[#71717A]">/{w.rate_type}</span></td>
+                    <td className="px-4 py-3"><Badge tone="accent">{pname(w.project_id)}</Badge></td>
+                    <td className="px-4 py-3">
+                      <button
+                        data-testid={`onboarding-btn-${w.id}`}
+                        onClick={() => openOnboarding(w)}
+                        className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs font-bold border transition-colors duration-200 ${
+                          obCount(w) === ONBOARDING.length
+                            ? "bg-[#F0FDF4] text-[#16A34A] border-[#16A34A]/30"
+                            : "bg-[#FEF2F2] text-[#DC2626] border-[#DC2626]/30 hover:bg-[#DC2626] hover:text-white"
+                        }`}
+                      >
+                        <ShieldCheck size={13} weight="bold" /> {obCount(w)}/{ONBOARDING.length}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button data-testid={`delete-worker-${w.id}`} onClick={() => del.mutate(w.id)} className="text-[#71717A] hover:text-[#DC2626] transition-colors duration-200"><Trash size={16} weight="bold" /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile View: Swipeable Cards */}
+          <div className="block md:hidden border border-[#E4E4E7] divide-y divide-[#E4E4E7]" data-testid="workers-cards">
+            {workers?.map((w) => (
+              <Swipeable key={w.id} onSwipeLeft={() => del.mutate(w.id)}>
+                <div className="p-4 flex items-center justify-between hover:bg-[#FAFAFA] transition-colors duration-200" data-testid={`worker-card-${w.id}`}>
+                  <div className="space-y-1">
+                    <p className="font-semibold text-base text-[#09090B]">{w.name}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-[#71717A]">{w.role}</span>
+                      <span className="text-xs font-mono text-zinc-600 bg-zinc-100 px-1.5 py-0.5">{fmt(w.rate)}/{w.rate_type}</span>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <Badge tone="accent">{pname(w.project_id)}</Badge>
+                      <button
+                        data-testid={`onboarding-btn-${w.id}`}
+                        onClick={() => openOnboarding(w)}
+                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-bold border transition-colors duration-200 ${
+                          obCount(w) === ONBOARDING.length
+                            ? "bg-[#F0FDF4] text-[#16A34A] border-[#16A34A]/30"
+                            : "bg-[#FEF2F2] text-[#DC2626] border-[#DC2626]/30"
+                        }`}
+                      >
+                        <ShieldCheck size={11} weight="bold" /> {obCount(w)}/{ONBOARDING.length}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <button data-testid={`delete-worker-${w.id}`} onClick={() => del.mutate(w.id)} className="text-[#71717A] hover:text-[#DC2626] p-2" aria-label="Delete worker">
+                      <Trash size={18} weight="bold" />
+                    </button>
+                  </div>
+                </div>
+              </Swipeable>
+            ))}
+          </div>
+        </>
       )}
 
       <Dialog open={!!obWorker} onOpenChange={(v) => !v && setObWorker(null)}>

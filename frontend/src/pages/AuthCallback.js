@@ -6,6 +6,8 @@ import api, { setToken } from "@/lib/api";
 let inFlight = false;
 
 export default function AuthCallback() {
+  // One-shot OAuth exchange — module-scoped `inFlight` guard survives StrictMode double-mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (inFlight) return;
     inFlight = true;
@@ -25,7 +27,7 @@ export default function AuthCallback() {
         window.location.replace("/dashboard");
       } catch (e) {
         // eslint-disable-next-line no-console
-        console.error("[AuthCallback] session exchange failed:", e?.response?.status, e?.response?.data);
+        if (process.env.NODE_ENV !== "production") console.error("[AuthCallback] session exchange failed:", e?.response?.status, e?.response?.data);
         window.location.replace("/?auth_error=" + encodeURIComponent(e?.response?.data?.detail || e?.message || "unknown"));
       }
     })();

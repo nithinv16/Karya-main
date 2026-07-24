@@ -48,6 +48,7 @@ export default function Contact() {
           </Link>
           <nav className="flex items-center gap-5 text-sm">
             <Link to="/blog" className="text-[#71717A] hover:text-[#09090B]">Blog</Link>
+            <Link to="/pricing" className="text-[#71717A] hover:text-[#09090B]">Pricing</Link>
             <Link to="/contact" className="font-semibold text-[#09090B]">Contact</Link>
             <Link to="/" className="bg-[#EA580C] text-white px-4 py-2 font-semibold hover:bg-[#C2410C] transition-colors">
               Sign in

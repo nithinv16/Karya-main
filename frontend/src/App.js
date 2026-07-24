@@ -24,6 +24,7 @@ import Expenses from "@/pages/Expenses";
 import { BlogIndex, BlogPost } from "@/pages/Blog";
 import Contact from "@/pages/Contact";
 import Attendance from "@/pages/Attendance";
+import Pricing from "@/pages/Pricing";
 
 function Protected({ children, allowIncomplete = false }) {
   const { user, loading } = useAuth();
@@ -63,9 +64,15 @@ function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
+      <Route path="/:locale" element={<Home />} />
       <Route path="/blog" element={<BlogIndex />} />
+      <Route path="/:locale/blog" element={<BlogIndex />} />
       <Route path="/blog/:slug" element={<BlogPost />} />
+      <Route path="/:locale/blog/:slug" element={<BlogPost />} />
       <Route path="/contact" element={<Contact />} />
+      <Route path="/:locale/contact" element={<Contact />} />
+      <Route path="/pricing" element={<Pricing />} />
+      <Route path="/:locale/pricing" element={<Pricing />} />
       <Route
         path="/onboarding"
         element={

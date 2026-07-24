@@ -41,7 +41,7 @@ export default function Profile() {
         ramadan_mode: !!user.ramadan_mode,
       });
     }
-  }, [user]);
+  }, [user, setForm]);
 
   const save = async (e) => {
     e.preventDefault();
@@ -71,8 +71,9 @@ export default function Profile() {
     try {
       const res = await api.patch("/auth/profile/language", { language: code });
       setUser(res.data);
-    } catch {
-      // silent — local shell already updated; retry on next Save
+    } catch (err) {
+      // Local shell already updated; retry on next Save.
+      if (process.env.NODE_ENV !== "production") console.warn("Language patch failed:", err);
     }
   };
 

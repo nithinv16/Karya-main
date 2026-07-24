@@ -43,14 +43,14 @@ export function I18nProvider({ children, userLang }) {
   useEffect(() => {
     if (userLang && isSupported(userLang) && userLang !== lang) {
       setLangState(userLang);
-      try { localStorage.setItem(STORAGE_KEY, userLang); } catch { /* ignore */ }
+      try { localStorage.setItem(STORAGE_KEY, userLang); } catch { /* localStorage may be unavailable in private browsing */ }
     }
   }, [userLang, lang]);
 
   const setLang = useCallback((code) => {
     if (!isSupported(code)) return;
     setLangState(code);
-    try { localStorage.setItem(STORAGE_KEY, code); } catch { /* ignore */ }
+    try { localStorage.setItem(STORAGE_KEY, code); } catch { /* localStorage may be unavailable in private browsing */ }
   }, []);
 
   const t = useCallback((key, fallback) => {

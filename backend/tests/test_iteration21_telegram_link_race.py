@@ -23,10 +23,10 @@ BASE_URL = os.environ.get(
     "REACT_APP_BACKEND_URL",
     "https://telegram-helper-bot.preview.emergentagent.com",
 ).rstrip("/")
-TOKEN = "test_session_karya1"
+TOKEN = os.environ.get("TEST_TOKEN", "test_session_karya1")
 USER_ID = "test-user-karya1"
-SECRET = "karya-tg-hook-7f3a9c2e"
-BOT_TOKEN = "8757902012:AAEwfZCQLuKwSzcWR_MTHkeGSGcOaVMjjg4"
+SECRET = os.environ.get("TEST_TG_SECRET", "karya-tg-hook-7f3a9c2e")
+BOT_TOKEN = os.environ.get("TEST_BOT_TOKEN", "8757902012:AAEwfZCQLuKwSzcWR_MTHkeGSGcOaVMjjg4")
 PROD_WEBHOOK = "https://voice-to-docs-6.emergent.host/api/telegram/webhook"
 PREVIEW_WEBHOOK = f"{BASE_URL}/api/telegram/webhook"
 QA_CHAT_ID = 999000111

@@ -150,7 +150,7 @@ export default function BureaucracyFeed() {
                   {it.impact.recommended_actions?.length > 0 && (
                     <div>
                       <p className="overline mb-1 flex items-center gap-1"><Warning size={11} weight="bold" /> Actions</p>
-                      <ul className="list-disc pl-5 space-y-1 text-sm text-[#3f3f46]">{it.impact.recommended_actions.slice(0, 5).map((a, i) => <li key={i}>{a}</li>)}</ul>
+                      <ul className="list-disc pl-5 space-y-1 text-sm text-[#3f3f46]">{it.impact.recommended_actions.slice(0, 5).map((a, i) => <li key={'action-' + i + '-' + a.slice(0, 15)}>{a}</li>)}</ul>
                     </div>
                   )}
                   <button data-testid={`track-feed-${it.id}`} onClick={() => track.mutate(it.id)} disabled={track.isPending && track.variables === it.id} className="mt-3 flex items-center gap-2 bg-[#09090B] text-white px-3 py-2 text-sm font-semibold hover:bg-[#EA580C] transition-colors duration-200 disabled:opacity-50 w-fit">

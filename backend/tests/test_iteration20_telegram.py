@@ -10,8 +10,8 @@ import requests
 from pymongo import MongoClient
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://telegram-helper-bot.preview.emergentagent.com").rstrip("/")
-TOKEN = "test_session_karya1"
-SECRET = "karya-tg-hook-7f3a9c2e"
+TOKEN = os.environ.get("TEST_TOKEN", "test_session_karya1")
+SECRET = os.environ.get("TEST_TG_SECRET", "karya-tg-hook-7f3a9c2e")
 USER_ID = "test-user-karya1"
 FAKE_CHAT = 999000222
 
