@@ -3972,18 +3972,19 @@ app.include_router(api)
 # --- Security middleware -----------------------------------------------------
 
 # CORS: default to explicit env allowlist; fall back to preview/prod Emergent domains
-# via allow_origin_regex. We NEVER default to "*" because that combined with
-# allow_credentials=True is explicitly rejected by browsers and is a red flag in
-# security audits. If CORS_ORIGINS is empty we simply don't add any static entries
-# and rely on the regex allowlist below.
+# via allow_origin_regex. When CORS_ORIGINS=* is set (recommended for Emergent
+# deploys) we widen to any origin but automatically disable credentials so
+# browsers don't reject the response. When a specific list is provided we keep
+# credentials on so cookies + Authorization headers flow correctly.
 _CORS_ENV = (os.environ.get("CORS_ORIGINS") or "").strip()
 _CORS_ORIGINS = [o.strip() for o in _CORS_ENV.split(",") if o.strip()] if _CORS_ENV else []
+_CORS_WILDCARD = "*" in _CORS_ORIGINS
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_CORS_ORIGINS,
-    allow_origin_regex=r"https://([a-z0-9-]+\.)?(preview\.emergentagent\.com|emergent\.host|emergent\.sh|karyaai\.app)$",
-    allow_credentials=True,
+    allow_origins=["*"] if _CORS_WILDCARD else _CORS_ORIGINS,
+    allow_origin_regex=None if _CORS_WILDCARD else r"https://([a-z0-9-]+\.)?(preview\.emergentagent\.com|emergent\.host|emergent\.sh|karyaai\.app)$",
+    allow_credentials=not _CORS_WILDCARD,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Session-Token"],
     expose_headers=["Content-Length", "Content-Type"],
