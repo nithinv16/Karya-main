@@ -1578,19 +1578,55 @@ async def _handle_tg_voice(chat_id: int, file_id: str, user: dict):
         await tg_send(chat_id, "⚠️ Couldn't download that voice note.")
         return
     data, filename = dl
-    # Transcribe using existing Whisper pipeline.
-    try:
-        buf = io.BytesIO(data)
-        buf.name = filename or "voice.ogg"
-        stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
-        resp = await stt.transcribe(file=buf, model="whisper-1", response_format="json")
-        transcript = (resp.text or "").strip()
-    except Exception as e:
-        logger.warning(f"tg voice transcribe failed: {e}")
-        await tg_send(chat_id, "⚠️ Couldn't transcribe the voice note. Please try again or type the command.")
+    # Very short recordings (<1KB) usually mean an accidental tap — Whisper
+    # rejects them anyway with an unhelpful error.
+    if len(data) < 1024:
+        await tg_send(chat_id, "🎙️ That clip was too short. Please record for at least a second and try again.")
+        return
+    if not EMERGENT_LLM_KEY:
+        logger.error("tg voice: EMERGENT_LLM_KEY not set — cannot transcribe.")
+        await tg_send(chat_id, "⚠️ Voice transcription isn't configured on this server. Please type the command instead.")
+        return
+    # Ensure a Whisper-friendly filename extension so the SDK infers content type.
+    if not filename or "." not in filename:
+        filename = "voice.ogg"
+    elif not filename.lower().endswith((".ogg", ".oga", ".mp3", ".wav", ".m4a", ".webm", ".opus")):
+        filename = filename + ".ogg"
+    # 2 attempts with a short backoff — matches /api/voice/transcribe hardening
+    # from iter29. Fail fast so the Telegram webhook (60s ingress) doesn't 504.
+    stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
+    transcript = ""
+    last_err: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            buf = io.BytesIO(data)
+            buf.name = filename
+            resp = await asyncio.wait_for(
+                stt.transcribe(file=buf, model="whisper-1", response_format="json"),
+                timeout=25,
+            )
+            transcript = (getattr(resp, "text", None) or "").strip()
+            last_err = None
+            break
+        except asyncio.TimeoutError:
+            last_err = Exception("upstream timeout")
+        except Exception as e:
+            last_err = e
+        if attempt == 0:
+            await asyncio.sleep(0.6)
+    if last_err is not None:
+        # Log the specific exception so we can diagnose from server logs.
+        logger.warning(
+            "tg voice transcribe failed for user=%s filename=%s size=%d: %s: %s",
+            user.get("user_id"), filename, len(data), type(last_err).__name__, last_err,
+        )
+        await tg_send(
+            chat_id,
+            "⚠️ Couldn't transcribe the voice note right now. Please try again in a moment or type the command.",
+        )
         return
     if not transcript:
-        await tg_send(chat_id, "🎙️ I couldn't hear anything in that recording.")
+        await tg_send(chat_id, "🎙️ I couldn't hear anything in that recording. Please speak a bit louder and try again.")
         return
     # Any tg_send() called inside this block will ALSO speak the reply via OpenAI TTS.
     token = _TG_SPEAK.set(True)
