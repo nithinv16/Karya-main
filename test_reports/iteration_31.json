@@ -1,0 +1,26 @@
+{
+  "summary": "Backend-only regression for prod-outage fix (server.py restore, .gitignore .env unblock, CORS wildcard). All smoke checks pass: server imports cleanly, /api/company-info=200, supervisor RUNNING, no fresh tracebacks. CORS wildcard verified for both karyaai.app and random origin (returns access-control-allow-origin: * with allow-credentials ABSENT). All 6 security headers present. iter30 regression: 19/20 pass — the single failure (TestCompanyInfo.test_company_info_public) is a stale test expectation, NOT a regression: CONTACT_EMAIL env var is set to sixn8.technologies@gmail.com in backend/.env, so endpoint correctly returns that value; test hardcodes old default admin@dukaaon.in. Additional smoke: /api/cost-trends, /api/telegram/notifications, /api/expenses with q+limit all return 200. .gitignore no longer contains .env entries; git status shows backend/.env and frontend/.env as untracked (ready for deploy commit).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/company-info", "issue": "Stale test assertion in test_iteration30.py::TestCompanyInfo::test_company_info_public — expects support_email=='admin@dukaaon.in' but env CONTACT_EMAIL=sixn8.technologies@gmail.com. Endpoint behavior is correct; update the test expectation or align env to intended default."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iteration30.py", "/app/test_reports/pytest/iter31_regression.xml"],
+  "action_items": [
+    "Optional: update test_iteration30.py::test_company_info_public to read expected support_email from env, or set CONTACT_EMAIL back to admin@dukaaon.in if that was the intended default. Not blocking prod deploy."
+  ],
+  "critical_code_review_comments": [
+    "server.py uses deprecated @app.on_event('startup') (2 occurrences at L2108, L4039) — migrate to lifespan handler in a future iteration.",
+    "server.py is very large (>4000 lines) — should be split into feature modules; user has already begun this with routes/reports.py, continue the pattern."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "95% (19/20 iter30; 1 stale-expectation failure, unrelated)", "frontend": "n/a (skipped)"},
+  "test_credentials": "Bearer test_session_karya1 (from review request)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "server.py restored and healthy. CORS=* with allow_credentials auto-disabled when wildcard detected. .gitignore no longer excludes .env files. Only outstanding issue is the stale support_email assertion in test_iteration30.py — cosmetic.",
+  "rca of the issue": "Prod outage RCA: (1) backend/server.py was deleted from working tree causing uvicorn 'Could not import module server' on deploy; (2) .gitignore excluded .env so deploy image had no env vars; (3) CORS pinned to single domain. All three resolved: server.py restored via git checkout, .gitignore cleaned, CORS_ORIGINS=* with dynamic allow_credentials toggle in server.py. Verified all fixes in preview environment."
+}
