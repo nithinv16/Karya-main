@@ -17,7 +17,8 @@ import {
   Envelope,
   Globe,
   Coins,
-  FileText
+  FileText,
+  Calculator,
 } from "@phosphor-icons/react";
 
 // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
@@ -28,6 +29,7 @@ const handleLogin = () => {
 
 const features = [
   { icon: HardHat, t: "Workforce Intelligence", d: "Workers, crews, multi-rate payroll & instant settlements." },
+  { icon: Calculator, t: "Estimator & Quotations", d: "Itemized cost estimates, AI margin optimization & instant client quotations." },
   { icon: ShieldCheck, t: "Compliance Agent", d: "AI tracks permits, licenses & deadlines before they expire." },
   { icon: Brain, t: "Org Memory + SOPs", d: "Capture tacit knowledge. Generate SOPs from a voice note." },
   { icon: Microphone, t: "Voice-First Ops", d: "Command your site in plain Hindi, Tamil, Malayalam & more." },
@@ -43,6 +45,8 @@ export default function Login() {
   const [voiceStep, setVoiceStep] = useState(0); // 0 = idle, 1 = loading, 2 = output
   const [complianceStep, setComplianceStep] = useState(0); // 0 = idle, 1 = auditing, 2 = ready
   const [payrollStep, setPayrollStep] = useState(0); // 0 = idle, 1 = settling, 2 = done
+  const [estimatorStep, setEstimatorStep] = useState(0); // 0 = idle, 1 = seeding, 2 = quote_ready
+  const [estimatorWorkType, setEstimatorWorkType] = useState("interior");
 
   // Telegram simulation states
   const [tgScenario, setTgScenario] = useState("aadhaar"); // 'aadhaar', 'receipt'
@@ -126,6 +130,13 @@ export default function Login() {
     setPayrollStep(1);
     setTimeout(() => {
       setPayrollStep(2);
+    }, 1200);
+  };
+
+  const handleSimulateEstimator = () => {
+    setEstimatorStep(1);
+    setTimeout(() => {
+      setEstimatorStep(2);
     }, 1200);
   };
 
@@ -452,6 +463,29 @@ export default function Login() {
               </li>
             </ul>
           </div>
+
+          {/* Card 7: Estimator & Client Quotations */}
+          <div className="border border-[#E4E4E7] p-8 flex flex-col justify-between hover:border-[#EA580C] hover:shadow-lg transition-all duration-200 bg-white">
+            <div className="space-y-4">
+              <div className="w-12 h-12 bg-orange-100 flex items-center justify-center text-[#EA580C]">
+                <Calculator size={26} weight="duotone" />
+              </div>
+              <h3 className="font-display font-bold text-xl">Estimator & Client Quotations</h3>
+              <p className="text-sm text-[#71717A] leading-relaxed">
+                Build itemized cost estimates for interior, civil, electrical or plumbing work. AI seeds regional market rates for materials, auto-calculates profit margins & GST, and exports print-ready client PDFs.
+              </p>
+            </div>
+            <ul className="mt-6 space-y-2 border-t border-[#E4E4E7] pt-4 text-xs text-[#71717A]">
+              <li className="flex items-center gap-2">
+                <CheckCircle size={16} color="#16A34A" weight="fill" />
+                AI regional market price seeding for materials
+              </li>
+              <li className="flex items-center gap-2">
+                <CheckCircle size={16} color="#16A34A" weight="fill" />
+                1-click PDF quotation export with GST & margin sliders
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -465,7 +499,7 @@ export default function Login() {
             <p className="overline text-[#EA580C]">Interactive Simulation</p>
             <h2 className="font-display font-black text-3xl tracking-tight">Test-Drive the AI Core</h2>
             <p className="text-[#71717A] text-sm">
-              See how the underlying system logic parses local speech, tracks critical compliance timelines, processes Telegram chat media, and manages UPI payouts.
+              See how the underlying system logic parses local speech, builds project estimates, tracks compliance timelines, and manages payouts.
             </p>
           </div>
 
@@ -489,6 +523,21 @@ export default function Login() {
               </button>
 
               <button
+                onClick={() => setActiveTab("estimator")}
+                className={`w-full text-left p-5 border transition-all flex items-start gap-4 ${
+                  activeTab === "estimator"
+                    ? "bg-[#09090B] text-white border-[#09090B]"
+                    : "bg-white text-[#09090B] border-[#E4E4E7] hover:border-[#EA580C]"
+                }`}
+              >
+                <Calculator size={24} weight="duotone" className={activeTab === "estimator" ? "text-[#EA580C]" : "text-zinc-500"} />
+                <div>
+                  <h4 className="font-bold text-sm">2. AI Estimator & Quotations</h4>
+                  <p className="text-xs opacity-80 mt-1">Seed AI market prices, set profit margin, and build client quotes.</p>
+                </div>
+              </button>
+
+              <button
                 onClick={() => setActiveTab("telegram")}
                 className={`w-full text-left p-5 border transition-all flex items-start gap-4 ${
                   activeTab === "telegram"
@@ -498,7 +547,7 @@ export default function Login() {
               >
                 <Envelope size={24} weight="duotone" className={activeTab === "telegram" ? "text-[#EA580C]" : "text-zinc-500"} />
                 <div>
-                  <h4 className="font-bold text-sm">2. Telegram AI Chatbot</h4>
+                  <h4 className="font-bold text-sm">3. Telegram AI Chatbot</h4>
                   <p className="text-xs opacity-80 mt-1">Snap Aadhaar IDs or upload cement invoices on-site.</p>
                 </div>
               </button>
@@ -513,7 +562,7 @@ export default function Login() {
               >
                 <ShieldCheck size={24} weight="duotone" className={activeTab === "compliance" ? "text-[#EA580C]" : "text-zinc-500"} />
                 <div>
-                  <h4 className="font-bold text-sm">3. Compliance Scanning</h4>
+                  <h4 className="font-bold text-sm">4. Compliance Scanning</h4>
                   <p className="text-xs opacity-80 mt-1">Run continuous audits on permits and labor rules.</p>
                 </div>
               </button>
@@ -528,7 +577,7 @@ export default function Login() {
               >
                 <Coins size={24} weight="duotone" className={activeTab === "payroll" ? "text-[#EA580C]" : "text-zinc-500"} />
                 <div>
-                  <h4 className="font-bold text-sm">4. Payout Settlements</h4>
+                  <h4 className="font-bold text-sm">5. Payout Settlements</h4>
                   <p className="text-xs opacity-80 mt-1">Calculate wages and export UPI dispatch files.</p>
                 </div>
               </button>
@@ -609,7 +658,102 @@ export default function Login() {
                 </div>
               )}
 
-              {/* TAB 2: TELEGRAM BOT CO-PILOT */}
+              {/* TAB 2: ESTIMATOR & QUOTATION ENGINE */}
+              {activeTab === "estimator" && (
+                <div className="flex-1 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-[#E4E4E7] pb-3">
+                      <span className="font-bold text-xs uppercase tracking-wide text-zinc-500">
+                        AI ESTIMATOR & QUOTATION ENGINE
+                      </span>
+                      <span className="text-xs font-bold text-[#EA580C]">1,200 SQ.FT · BANGALORE</span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setEstimatorWorkType("interior"); setEstimatorStep(0); }}
+                        className={`px-3 py-1 text-xs font-semibold border ${estimatorWorkType === "interior" ? "bg-[#EA580C] text-white border-[#EA580C]" : "bg-white text-zinc-600 border-[#E4E4E7]"}`}
+                      >
+                        Interior (2BHK)
+                      </button>
+                      <button
+                        onClick={() => { setEstimatorWorkType("civil"); setEstimatorStep(0); }}
+                        className={`px-3 py-1 text-xs font-semibold border ${estimatorWorkType === "civil" ? "bg-[#EA580C] text-white border-[#EA580C]" : "bg-white text-zinc-600 border-[#E4E4E7]"}`}
+                      >
+                        Civil / Masonry
+                      </button>
+                    </div>
+
+                    {estimatorStep === 2 && (
+                      <div className="space-y-2.5 fade-in">
+                        <div className="border border-[#E4E4E7] p-3 text-xs bg-zinc-50">
+                          <p className="font-bold text-zinc-800 mb-1.5 flex items-center justify-between">
+                            <span>{estimatorWorkType === "interior" ? "2BHK Interior Decoration Breakdown" : "Civil Foundation & Brickwork"}</span>
+                            <span className="text-[10px] text-green-700 font-bold bg-green-50 px-2 py-0.5 border border-green-200">AI SEEDED</span>
+                          </p>
+                          <div className="space-y-1 text-[11px] text-zinc-600 font-mono">
+                            <p>• Plywood 19mm Marine Grade: 450 sqft × ₹125 = ₹56,250</p>
+                            <p>• Carpenter & Skilled Labour: 30 days × ₹800 = ₹24,000</p>
+                            <p>• Laminate & Hardware Fittings: ₹35,000</p>
+                            <p>• Painting & Finish: 1,200 sqft × ₹25 = ₹30,000</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                          <div className="border border-[#E4E4E7] p-2 bg-white">
+                            <span className="text-[10px] text-zinc-400 block">SUBTOTAL</span>
+                            <span className="font-bold text-zinc-800">₹1,45,250</span>
+                          </div>
+                          <div className="border border-[#E4E4E7] p-2 bg-white">
+                            <span className="text-[10px] text-zinc-400 block">MARGIN (15%)</span>
+                            <span className="font-bold text-orange-600">+₹21,787</span>
+                          </div>
+                          <div className="border border-[#E4E4E7] p-2 bg-white">
+                            <span className="text-[10px] text-zinc-400 block">GST (18%)</span>
+                            <span className="font-bold text-zinc-800">+₹30,066</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-green-50 p-3 border border-green-200 text-xs text-green-800 flex items-center justify-between">
+                          <div>
+                            <p className="font-bold flex items-center gap-1">
+                              <CheckCircle size={14} weight="fill" color="#16A34A" /> Client Quotation Total: ₹1,97,103
+                            </p>
+                            <p className="text-[11px] text-green-700">Formatted with payment terms & breakdown.</p>
+                          </div>
+                          <span className="text-[10px] bg-green-700 text-white font-bold px-2.5 py-1">PDF READY</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {estimatorStep === 1 && (
+                      <div className="flex items-center gap-3 text-sm py-8">
+                        <ArrowsClockwise size={18} className="animate-spin text-[#EA580C]" />
+                        <span className="text-[#71717A]">Seeding Bangalore market rates & building quotation breakdown…</span>
+                      </div>
+                    )}
+
+                    {estimatorStep === 0 && (
+                      <div className="text-center text-zinc-400 py-8 text-xs">
+                        Select work type above and click below to test the AI Estimator & Quotation simulation.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-4">
+                    <button
+                      onClick={handleSimulateEstimator}
+                      disabled={estimatorStep === 1}
+                      className="bg-[#09090B] text-white px-5 py-3 text-sm font-semibold hover:bg-[#EA580C] transition-all flex items-center gap-2"
+                    >
+                      <Play size={16} weight="fill" />
+                      Run AI Estimator & Build Quotation
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: TELEGRAM BOT CO-PILOT */}
               {activeTab === "telegram" && (
                 <div className="flex-1 flex flex-col justify-between">
                   <div className="space-y-4">

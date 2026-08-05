@@ -8,7 +8,7 @@ import NotificationBell from "@/components/NotificationBell";
 import {
   HardHat, SquaresFour, UsersThree, Money, ShieldCheck,
   ListChecks, Brain, SignOut, Sparkle, Handshake, Broadcast, ChartLineUp, ClipboardText,
-  DotsThreeCircle, X, UserCircle, Question, Receipt, Calendar,
+  DotsThreeCircle, X, UserCircle, Question, Receipt, Calendar, Calculator,
 } from "@phosphor-icons/react";
 
 const NAV_KEYS = [
@@ -19,6 +19,7 @@ const NAV_KEYS = [
   { to: "/subcontractors", key: "nav.subcontractors", icon: Handshake },
   { to: "/reports", key: "nav.reports", icon: ClipboardText },
   { to: "/expenses", key: "nav.expenses", icon: Receipt },
+  { to: "/estimates", key: "nav.estimator", icon: Calculator },
   { to: "/insights", key: "nav.insights", icon: ChartLineUp },
   { to: "/compliance", key: "nav.compliance", icon: ShieldCheck },
   { to: "/feed", key: "nav.feed", icon: Broadcast },

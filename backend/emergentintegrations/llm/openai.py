@@ -22,11 +22,13 @@ class OpenAISpeechToText:
                 return resp
             except Exception as e:
                 logger.warning(f"OpenAISpeechToText transcription failed: {e}")
+                raise  # Re-raise so the caller's retry / timeout logic can act on it
         
-        # Mock transcription response
+        # Mock transcription response — only when no API key is configured
         class FakeResp:
             text = "Mock transcribed text from voice note"
         return FakeResp()
+
 
 class OpenAITextToSpeech:
     def __init__(self, api_key: str = None):

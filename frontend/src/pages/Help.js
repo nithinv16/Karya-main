@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/ui-bits";
 import {
   MagnifyingGlass, Sparkle, Rocket, UsersThree, Money, ClipboardText,
   ListChecks, ShieldCheck, PaperPlaneTilt, WhatsappLogo, Question,
-  Buildings, ChartLineUp, CaretDown, Brain, Handshake,
+  Buildings, ChartLineUp, CaretDown, Brain, Handshake, Calculator,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import TranslateButton from "@/components/TranslateButton";
@@ -83,6 +83,38 @@ const SECTIONS = [
       {
         q: "What is retention money?",
         a: "For subcontractors — a % of each bill you hold back until project completion. Karya tracks retention balance per subcontractor and reminds you at handover.",
+      },
+    ],
+  },
+  {
+    id: "estimator",
+    icon: Calculator,
+    title: "Estimator & Quotations",
+    intro: "Create itemized project estimates with materials, labour, margins and GST. Optimize rates with AI and share client-ready quotations.",
+    articles: [
+      {
+        q: "What is the step-by-step workflow to create an estimate?",
+        a: "Follow these 3 steps:\n1. Setup Material Rates: Click Estimator → 'Material Prices'. Tap 'Seed Prices' to let AI populate market rates for your city, or use the bottom form to add supplier prices manually.\n2. Build Estimate: Tap 'New Estimate', enter client details and area (sq ft). In the builder, tap 'Add Item' (material names autocomplete from your price list), then set profit margin and GST.\n3. Share Quotation: Tap 'Quotation' to preview and print/export a professional client quotation.",
+      },
+      {
+        q: "How do I seed or manually add material prices?",
+        a: "Open Estimator → click 'Material Prices':\n• AI Seeding: Enter your city (e.g., Bangalore, Mumbai, Dubai) and work type in the top orange bar, then tap 'Seed Prices'. AI fetches current market rates for 30+ items.\n• Manual Addition: Scroll to the bottom form, enter the item name, category, unit, and unit price, then tap '+'. Custom entries take priority and won't be overwritten.",
+      },
+      {
+        q: "How do line items and calculations work?",
+        a: "In the Estimator workspace, tap “Add Item” to add line items categorized into Material, Labour, Equipment, Overhead, or Other. As you enter quantities and rates, Karya auto-calculates subtotal, margin, GST, and grand total in real-time.",
+      },
+      {
+        q: "How do I use AI Optimization?",
+        a: "In the Estimator builder, tap “AI Optimize”. Karya analyzes your line items against regional rates and suggests practical cost reductions, bulk purchase savings, or quality improvements.",
+      },
+      {
+        q: "How does the Client Quotation view work?",
+        a: "Karya transforms your internal estimate into a formal client-facing quotation document:\n• Header: Contractor branding, client contact info, and unique quotation reference number (e.g. EST-A1B2C3D4).\n• Project Info: Work type, total area, estimated completion timeline (days), and quotation validity date.\n• Categorized Items: Line items automatically grouped under Materials, Labour Charges, Equipment, Overhead, etc.\n• Price Summary: Itemized subtotal, contractor profit margin, discounts, GST (5%, 12%, 18%), and final grand total.\n• Terms & Notes: Payment terms (e.g. 50% advance, 40% completion, 10% handover) and job instructions.\n• Print / PDF Export: Tap 'Print / PDF' to save a clean PDF or print directly.",
+      },
+      {
+        q: "How do I generate and share a client quotation?",
+        a: "Open any estimate from the Estimator list or builder → tap 'Quotation' (or 'Eye' icon). Karya renders the quotation document instantly. You can print it, save it as a PDF using your browser's print tool, or copy details to send to the client.",
       },
     ],
   },

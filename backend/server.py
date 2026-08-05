@@ -684,6 +684,7 @@ async def headcount_attendance(body: AttendanceHeadcountIn, user: dict):  # shim
     return await _headcount_attendance_core(_attendance_deps(), body, user)
 
 
+# Moved to routes/attendance.py
 # ---------------------------------------------------------------- transactions & ledger
 
 class TxnIn(BaseModel):
@@ -691,6 +692,51 @@ class TxnIn(BaseModel):
     type: str
     amount: float
     note: str = ""
+
+async def get_worker_transactions(uid: str, worker_id: Optional[str] = None) -> list:
+    q: Dict[str, Any] = {"owner_id": uid}
+    if worker_id:
+        q["worker_id"] = worker_id
+    txns = await db.transactions.find(q, {"_id": 0}).sort("created_at", -1).to_list(20000)
+    
+    w_q: Dict[str, Any] = {"owner_id": uid}
+    if worker_id:
+        w_q["id"] = worker_id
+    workers = await db.workers.find(w_q, {"_id": 0}).to_list(2000)
+    w_map = {w["id"]: w for w in workers}
+    
+    att_q: Dict[str, Any] = {"owner_id": uid, "worker_id": {"$ne": None}}
+    if worker_id:
+        att_q["worker_id"] = worker_id
+    attendance_records = await db.attendance.find(att_q, {"_id": 0}).to_list(50000)
+    
+    synthetic_txns = []
+    for a in attendance_records:
+        wid = a.get("worker_id")
+        worker = w_map.get(wid) if wid else None
+        if not worker:
+            continue
+        rate = float(worker.get("rate") or 0)
+        rate_type = worker.get("rate_type", "daily")
+        if rate > 0 and rate_type == "daily":
+            cnt = float(a.get("count") or 0)
+            if cnt > 0:
+                status_str = (a.get("status") or "present").replace("_", " ").title()
+                synthetic_txns.append({
+                    "id": f"synthetic-att-{a.get('id')}",
+                    "worker_id": wid,
+                    "owner_id": uid,
+                    "type": "wage",
+                    "amount": cnt * rate,
+                    "note": f"Attendance: {status_str} ({cnt} day)",
+                    "date": a.get("date"),
+                    "created_at": a.get("created_at") or a.get("date"),
+                    "is_synthetic": True
+                })
+                
+    merged = txns + synthetic_txns
+    merged.sort(key=lambda t: (t.get("date") or "", t.get("created_at") or ""), reverse=True)
+    return merged
 
 def ledger_summary(txns: list) -> dict:
     earned = sum(t["amount"] for t in txns if t["type"] in EARN_TYPES)
@@ -708,7 +754,7 @@ def ledger_summary(txns: list) -> dict:
 
 @api.get("/transactions")
 async def list_transactions(user: dict = Depends(get_current_user)):
-    return await db.transactions.find({"owner_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    return await get_worker_transactions(user["user_id"])
 
 @api.post("/transactions")
 async def create_transaction(body: TxnIn, user: dict = Depends(get_current_user)):
@@ -725,7 +771,7 @@ async def worker_ledger(worker_id: str, user: dict = Depends(get_current_user)):
     worker = await db.workers.find_one({"id": worker_id, "owner_id": user["user_id"]}, {"_id": 0})
     if not worker:
         raise HTTPException(status_code=404, detail="Worker not found")
-    txns = await db.transactions.find({"worker_id": worker_id, "owner_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    txns = await get_worker_transactions(user["user_id"], worker_id)
     return {**ledger_summary(txns), "transactions": txns, "worker": worker}
 
 # ---------------------------------------------------------------- subcontractors
@@ -955,14 +1001,16 @@ Classify into one intent and extract fields. Output JSON:
 {"intent": "add_worker|advance|payment|bonus|deduction|attendance|log_work_days|complete_task|unknown",
  "worker_name": str|null, "project_name": str|null, "amount": number|null, "role": str|null,
  "rate": number|null, "rate_type": "daily|weekly|monthly|contract|sqft|task|milestone|piece"|null,
- "count": number|null, "days": number|null, "quantity": number|null, "unit": str|null, "note": str|null}
+ "count": number|null, "days": number|null, "quantity": number|null, "unit": str|null, "status": "present|absent|half_day"|null, "note": str|null}
 Rules:
 - "X took an advance of 5000" -> advance
 - "Pay X 12000" -> payment
-- "Ten workers arrived today at <project>" -> attendance with count
+- "Ten workers arrived today at <project>" -> attendance with count, status="present"
 - "Add worker X as mason at 950 daily" -> add_worker
 - "X worked 8 days" -> log_work_days
 - "X completed 200 sqft tiling" -> complete_task with quantity and unit
+- "Ramesh was absent today" -> attendance with worker_name="Ramesh", status="absent"
+- "Suresh worked half day today" -> attendance with worker_name="Suresh", status="half_day"
 - Amounts may use ₹, Rs, rupees, k (5k=5000), lakh (1 lakh=100000)."""
 
 @api.post("/command")
@@ -1018,16 +1066,33 @@ async def _execute_command(text: str, user: dict) -> dict:
 
     if intent == "attendance":
         proj = find_by_name(projects, parsed.get("project_name"))
-        count = int(parsed.get("count") or 1)
         worker = find_by_name(workers, parsed.get("worker_name"))
+        status = parsed.get("status") or "present"
+        if status not in _ATTENDANCE_STATUSES:
+            status = "present"
+        
+        if worker:
+            count = 0.0 if status == "absent" else (0.5 if status == "half_day" else 1.0)
+        else:
+            count = float(parsed.get("count") or 1)
+            status = None
+            
         await db.attendance.insert_one({
-            "id": new_id(), "owner_id": uid, "worker_id": worker["id"] if worker else None,
-            "project_id": proj["id"] if proj else None, "date": today_str(), "count": count if not worker else 1,
+            "id": new_id(),
+            "owner_id": uid,
+            "worker_id": worker["id"] if worker else None,
+            "project_id": proj["id"] if proj else None,
+            "date": today_str(),
+            "status": status,
+            "count": count,
             "created_at": now_iso(),
         })
         where = f" at {proj['name']}" if proj else ""
-        who = worker["name"] if worker else f"{count} workers"
-        return {"applied": True, "summary": f"Marked {who} present today{where}."}
+        if worker:
+            status_desc = status.replace("_", " ")
+            return {"applied": True, "summary": f"Marked {worker['name']} {status_desc} today{where}."}
+        else:
+            return {"applied": True, "summary": f"Marked {int(count)} workers present today{where}."}
 
     if intent == "log_work_days":
         worker = find_by_name(workers, parsed.get("worker_name"))
@@ -1583,6 +1648,20 @@ async def _handle_tg_voice(chat_id: int, file_id: str, user: dict):
     if len(data) < 1024:
         await tg_send(chat_id, "🎙️ That clip was too short. Please record for at least a second and try again.")
         return
+    # Upper-bound guard: 20 MB is Telegram's practical voice limit and close to
+    # Whisper's 25 MB cap. Rejecting early avoids a long upload that will likely
+    # timeout the 25s asyncio.wait_for anyway.
+    if len(data) > 20 * 1024 * 1024:
+        await tg_send(chat_id, "⚠️ That recording is too large (20 MB max). Please send a shorter voice note.")
+        return
+    # Per-user rate limiting — matches the web /voice/transcribe endpoint.
+    # rate_limit() raises HTTPException(429) which makes no sense in TG context,
+    # so we catch it and send a friendly message instead.
+    try:
+        await rate_limit(f"tg_stt:{user['user_id']}", limit=30, window_seconds=60)
+    except HTTPException:
+        await tg_send(chat_id, "⚠️ Too many voice notes — please wait a minute and try again.")
+        return
     if not EMERGENT_LLM_KEY:
         logger.error("tg voice: EMERGENT_LLM_KEY not set — cannot transcribe.")
         await tg_send(chat_id, "⚠️ Voice transcription isn't configured on this server. Please type the command instead.")
@@ -1617,8 +1696,8 @@ async def _handle_tg_voice(chat_id: int, file_id: str, user: dict):
     if last_err is not None:
         # Log the specific exception so we can diagnose from server logs.
         logger.warning(
-            "tg voice transcribe failed for user=%s filename=%s size=%d: %s: %s",
-            user.get("user_id"), filename, len(data), type(last_err).__name__, last_err,
+            "tg voice transcribe failed for user=%s file_id=%s filename=%s size=%d: %s: %s",
+            user.get("user_id"), file_id, filename, len(data), type(last_err).__name__, last_err,
         )
         await tg_send(
             chat_id,
@@ -1826,6 +1905,18 @@ async def _handle_tg_attendance_command(chat_id: int, user: dict, text: str):
         where = f" at <b>{html.escape(proj['name'])}</b>" if proj else ""
         await tg_send(chat_id, f"✅ Logged <b>{count}</b> workers present today{where}.")
         return
+
+    # Path A1: worker name only form (defaults to present).
+    if arg:
+        worker = find_by_name(workers, arg)
+        if worker:
+            try:
+                await mark_attendance(AttendanceMarkIn(worker_id=worker["id"], status="present"), user)
+            except HTTPException as e:
+                await tg_send(chat_id, f"⚠️ {e.detail}")
+                return
+            await tg_send(chat_id, f"✅ Marked <b>{html.escape(worker['name'])}</b> as <b>present</b> for today.")
+            return
 
     # Path C: no arg — show a quick help.
     if not arg:
@@ -2492,19 +2583,31 @@ async def ask_knowledge(body: AskIn, user: dict = Depends(get_current_user)):
 
 async def _assistant_answer(user: dict, question: str) -> str:
     uid = user["user_id"]
+    ctx = country_ctx(user)
+    symbol = ctx["currency_symbol"]
+    currency_code = ctx["currency_code"]
+
     workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
-    txns = await db.transactions.find({"owner_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(3000)
+    txns = await get_worker_transactions(uid)
     projects = await db.projects.find({"owner_id": uid}, {"_id": 0}).to_list(200)
     subs = await db.subcontractors.find({"owner_id": uid}, {"_id": 0}).to_list(200)
+    estimates = await db.estimates.find({"owner_id": uid}, {"_id": 0}).to_list(100)
+    comp_items = await db.compliance.find({"owner_id": uid}, {"_id": 0}).to_list(200)
+    recent_exp = await db.expenses.find({"owner_id": uid}, {"_id": 0}).sort("date", -1).limit(10).to_list(10)
+
     pmap = {p["id"]: p["name"] for p in projects}
+    
+    # Worker summaries
     lines = []
     for w in workers:
         wt = [t for t in txns if t["worker_id"] == w["id"]]
         s = ledger_summary(wt)
         lines.append(
-            f"- {w['name']} ({w['role']}, ₹{int(w.get('rate') or 0)}/{w.get('rate_type')}, project: {pmap.get(w.get('project_id'), 'unassigned')}): "
-            f"earned ₹{int(s['earned'])}, advances ₹{int(s['advances'])}, deductions ₹{int(s['deductions'])}, net payable ₹{int(s['balance'])}"
+            f"- {w['name']} ({w['role']}, {symbol}{int(w.get('rate') or 0)}/{w.get('rate_type')}, project: {pmap.get(w.get('project_id'), 'unassigned')}): "
+            f"earned {symbol}{int(s['earned'])}, advances {symbol}{int(s['advances'])}, deductions {symbol}{int(s['deductions'])}, net balance {symbol}{int(s['balance'])}"
         )
+
+    # Subcontractor summaries
     sub_lines = []
     if subs:
         sub_ids = [s["id"] for s in subs]
@@ -2514,18 +2617,87 @@ async def _assistant_answer(user: dict, question: str) -> str:
             sub_txns_map.setdefault(t.get("sub_id"), []).append(t)
         for s in subs:
             sm = sub_summary(s, sub_txns_map.get(s["id"], []))
-            sub_lines.append(f"- {s['name']} ({s.get('firm', '')}, {s.get('trade', '')}): gross ₹{int(sm['gross'])}, paid ₹{int(sm['paid'])}, retention held ₹{int(sm['retention_held'])}, pending ₹{int(sm['pending'])}")
+            sub_lines.append(f"- {s['name']} ({s.get('firm', '')}, {s.get('trade', '')}): contract {symbol}{int(s.get('contract_value', 0))}, gross {symbol}{int(sm['gross'])}, paid {symbol}{int(sm['paid'])}, retention held {symbol}{int(sm['retention_held'])}, pending {symbol}{int(sm['pending'])}")
+
+    # Estimate summaries
+    est_lines = []
+    for e in estimates:
+        est_lines.append(
+            f"- Estimate '{e.get('title')}' ({e.get('work_type')}, {e.get('area_sqft')} {e.get('area_unit')}) for client {e.get('client_name') or 'N/A'}: "
+            f"grand total {symbol}{int(e.get('grand_total') or 0)}, status: {e.get('status')}, items: {len(e.get('line_items', []))}"
+        )
+
+    # Compliance summaries
+    comp_lines = []
+    for c in comp_items:
+        comp_lines.append(f"- {c.get('title')} ({c.get('category')}): status {c.get('status')}, due date {c.get('due_date') or 'none'}")
+
+    # Expense summaries
+    exp_lines = []
+    for ex in recent_exp:
+        exp_lines.append(f"- {ex.get('date')}: {ex.get('vendor') or 'Vendor'} ({ex.get('category')}): {symbol}{int(ex.get('amount') or 0)}")
+
     today = today_str()
     cost_today = sum(t["amount"] for t in txns if t["type"] == "wage" and t.get("date") == today)
-    recent = "\n".join(f"- {t.get('date')}: {t['type']} ₹{int(t['amount'])} for {next((w['name'] for w in workers if w['id'] == t['worker_id']), '?')} {('(' + t['note'] + ')') if t.get('note') else ''}" for t in txns[:40])
+    recent_txns = "\n".join(f"- {t.get('date')}: {t['type']} {symbol}{int(t['amount'])} for {next((w['name'] for w in workers if w['id'] == t['worker_id']), '?')} {('(' + t['note'] + ')') if t.get('note') else ''}" for t in txns[:30])
+
+    platform_guide = """
+=== KARYA PLATFORM CAPABILITIES & HOW TO USE EVERYTHING ===
+1. ESTIMATOR & QUOTATIONS (/estimates):
+   - What it does: Calculates complete project costs (Materials, Labour, Equipment, Overhead), profit margins, GST, and produces clean client-ready Quotation PDFs.
+   - Material Prices & AI Seed: Click 'Material Prices' -> enter city (e.g. Bangalore, Dubai) & work type -> tap 'Seed Prices' to auto-populate retail rates with AI. Or add custom prices manually at the bottom.
+   - Building Estimate: Tap '+ New Estimate' -> enter client info & area size (sq.ft) -> tap 'Add Item' (autocompletes from material list) -> set Profit Margin slider (0-40%) & GST buttons (0%, 5%, 12%, 18%).
+   - Client Quotation: Click 'Quotation' (or eye icon) to generate a formal bill -> tap 'Print / PDF' to save or print.
+   - AI Optimize: Click 'AI Optimize' inside an estimate for smart cost reduction and bulk buying suggestions.
+
+2. WORKFORCE & ATTENDANCE (/workforce, /attendance):
+   - Manage workers, roles, wage rates (daily, hourly, sqft, piece rate), Aadhaar/Emirates ID documents.
+   - Log attendance manually or via Telegram voice ("10 workers at Skyline today").
+   - Advances & Deductions: Log money given to workers before payroll; automatically deducted from settlements.
+
+3. PAYROLL & SETTLEMENTS (/payroll):
+   - Formula: (Attendance x Rate) - Advances - Deductions = Balance owed.
+   - Record payments via cash, bank transfer, UPI, or WPS.
+
+4. SUBCONTRACTORS (/subcontractors):
+   - Subcontractor ledger tracking, contract values, retention money (% held back until completion), and progress payments.
+
+5. DAILY SITE REPORTS (/reports):
+   - Turn voice notes + 2 site photos into structured daily site progress reports in 20 seconds.
+   - Automatic delivery to clients via WhatsApp (using Twilio).
+
+6. COMPLIANCE AGENT (/compliance):
+   - Tracks BOCW Cess, GST returns, EPF/ESIC (India) or Trade License, Labour Cards, WPS, Civil Defense NOC (UAE).
+   - AI Penalty Analysis estimates fines and provides step-by-step renewal action plans.
+
+7. TELEGRAM BOT (@karya_ops_bot):
+   - Connect via Profile -> Connect Telegram code (/start XXXXXX).
+   - Send voice notes in Hindi, Tamil, Malayalam, Telugu, English -> AI transcribes & acts.
+   - Send receipts or photos -> AI categorizes and attaches to workers/expenses.
+
+8. REGULATION FEED (/feed) & SOP GENERATOR (/sops):
+   - Live updates on government construction rules.
+   - Generate custom step-by-step site SOPs from voice notes or rough text.
+"""
+
     system = (
-        "You are the AI operations assistant for an Indian construction company on the Karya platform. "
-        "Answer strictly from the operational data below. Use ₹ formatting. Be direct and short. Today is " + today + ".\n\n"
-        f"PROJECTS: {', '.join(p['name'] for p in projects) or 'none'}\n"
-        f"TODAY'S LABOUR COST: ₹{int(cost_today)}\n\nWORKER LEDGERS:\n" + ("\n".join(lines) or "none") +
-        "\n\nSUBCONTRACTOR LEDGERS:\n" + ("\n".join(sub_lines) or "none") +
-        "\n\nRECENT TRANSACTIONS:\n" + (recent or "none")
+        f"You are the AI Operations Assistant for Karya — the AI operating system for construction.\n"
+        f"USER CONTEXT: Name: {user.get('name')}, Business: {user.get('company') or 'Construction'}, Country: {ctx.get('name')} ({currency_code}), Currency Symbol: {symbol}.\n"
+        f"Today's Date: {today}.\n"
+        f"Your tone must be warm, direct, helpful, and plain-spoken — explain everything simply like talking to someone with no computer/tech experience.\n\n"
+        f"{platform_guide}\n\n"
+        f"=== LIVE WORKSPACE DATA FOR THIS USER ===\n"
+        f"PROJECTS ({len(projects)}): {', '.join(p['name'] for p in projects) or 'None'}\n"
+        f"TODAY'S LABOUR COST: {symbol}{int(cost_today)}\n\n"
+        f"WORKER LEDGERS ({len(workers)} workers):\n" + ("\n".join(lines) or "None") + "\n\n"
+        f"SUBCONTRACTOR LEDGERS ({len(subs)} subs):\n" + ("\n".join(sub_lines) or "None") + "\n\n"
+        f"PROJECT ESTIMATES ({len(estimates)} estimates):\n" + ("\n".join(est_lines) or "None") + "\n\n"
+        f"COMPLIANCE TRACKER ({len(comp_items)} items):\n" + ("\n".join(comp_lines) or "None") + "\n\n"
+        f"RECENT EXPENSES:\n" + ("\n".join(exp_lines) or "None") + "\n\n"
+        f"RECENT TRANSACTIONS:\n" + (recent_txns or "None") + "\n\n"
+        f"INSTRUCTIONS: Answer user questions directly. If they ask how to do something on the platform, give simple 1-2-3 step instructions using the platform guide above. Always use the user's currency ({symbol})."
     )
+
     answer = await ai_text(system[:28000], question)
     return answer.strip()
 
@@ -2541,7 +2713,7 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     uid = user["user_id"]
     workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
     projects = await db.projects.find({"owner_id": uid}, {"_id": 0}).to_list(200)
-    txns = await db.transactions.find({"owner_id": uid}, {"_id": 0}).to_list(5000)
+    txns = await get_worker_transactions(uid)
     att = await db.attendance.find({"owner_id": uid}, {"_id": 0}).to_list(5000)
     comp = await db.compliance.find({"owner_id": uid}, {"_id": 0}).to_list(500)
     subs = await db.subcontractors.find({"owner_id": uid}, {"_id": 0}).to_list(200)
@@ -2683,7 +2855,7 @@ async def insights(user: dict = Depends(get_current_user)):
     uid = user["user_id"]
     workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
     projects = await db.projects.find({"owner_id": uid}, {"_id": 0}).to_list(200)
-    txns = await db.transactions.find({"owner_id": uid}, {"_id": 0}).to_list(5000)
+    txns = await get_worker_transactions(uid)
     att = await db.attendance.find({"owner_id": uid}, {"_id": 0}).to_list(5000)
     comp = await db.compliance.find({"owner_id": uid}, {"_id": 0}).to_list(500)
     subs = await db.subcontractors.find({"owner_id": uid}, {"_id": 0}).to_list(200)
@@ -2801,7 +2973,8 @@ async def export_daily_report(report_id: str, format: str = "pdf", user: dict = 
         q_att["project_id"] = rec["project_id"]
     att_docs = await db.attendance.find(q_att, {"_id": 0}).to_list(2000)
     present_today = sum(a.get("count", 1) for a in att_docs)
-    tx_docs = await db.transactions.find(q_tx, {"_id": 0}).to_list(2000)
+    all_txns = await get_worker_transactions(user["user_id"])
+    tx_docs = [t for t in all_txns if t.get("date") == rec.get("report_date") and t.get("type") == "wage"]
     if rec.get("project_id"):
         # Filter wage txns to workers belonging to this project.
         project_workers = await db.workers.find({"owner_id": user["user_id"], "project_id": rec["project_id"]}, {"_id": 0, "id": 1}).to_list(2000)
@@ -2875,7 +3048,7 @@ async def export_worker_ledger(worker_id: str, format: str = "pdf", user: dict =
     worker = await db.workers.find_one({"id": worker_id, "owner_id": user["user_id"]}, {"_id": 0})
     if not worker:
         raise HTTPException(status_code=404, detail="Worker not found")
-    txns = await db.transactions.find({"worker_id": worker_id, "owner_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    txns = await get_worker_transactions(user["user_id"], worker_id)
     s = ledger_summary(txns)
     project_name = "—"
     if worker.get("project_id"):
@@ -2921,7 +3094,7 @@ async def export_settlements(format: str = "xlsx", user: dict = Depends(get_curr
     money = _money_fn(user)
     uid = user["user_id"]
     workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(2000)
-    txns = await db.transactions.find({"owner_id": uid}, {"_id": 0}).to_list(20000)
+    txns = await get_worker_transactions(uid)
     projects = await db.projects.find({"owner_id": uid}, {"_id": 0}).to_list(500)
     pmap = {p["id"]: p["name"] for p in projects}
 
@@ -3034,6 +3207,47 @@ async def export_compliance(format: str = "pdf", user: dict = Depends(get_curren
 # Moved to routes/expenses.py. ExpenseIn re-exported below for Telegram
 # handler that constructs expense records directly.
 from routes.expenses import ExpenseIn  # noqa: F401 (used by Telegram receipt path)
+
+class ExpensePatch(BaseModel):
+    vendor: Optional[str] = None
+    date: Optional[str] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    category: Optional[str] = None
+    items: Optional[List[Dict[str, Any]]] = None
+    summary: Optional[str] = None
+    project_id: Optional[str] = None
+
+
+@api.patch("/expenses/{expense_id}")
+async def patch_expense(expense_id: str, body: ExpensePatch, user: dict = Depends(get_current_user)):
+    """Update an expense record — used after receipt parsing to correct AI-extracted data."""
+    existing = await db.expenses.find_one({"id": expense_id, "owner_id": user["user_id"]})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    updates: Dict[str, Any] = {}
+    if body.vendor is not None:
+        updates["vendor"] = body.vendor.strip()
+    if body.date is not None:
+        updates["date"] = body.date.strip()
+    if body.amount is not None:
+        updates["amount"] = float(body.amount)
+    if body.currency is not None:
+        updates["currency"] = body.currency.strip()
+    if body.category is not None:
+        updates["category"] = body.category.strip()
+    if body.items is not None:
+        updates["items"] = body.items
+    if body.summary is not None:
+        updates["summary"] = body.summary.strip()
+    if body.project_id is not None:
+        updates["project_id"] = body.project_id or None
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    await db.expenses.update_one({"id": expense_id}, {"$set": updates})
+    doc = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
+    return doc
+
 
 # ---------------------------------------------------------------- cost trends
 # Moved to routes/cost_trends.py
@@ -3237,7 +3451,7 @@ async def _build_morning_briefing(user: dict) -> str:
         "due_date": {"$gte": today.isoformat(), "$lte": horizon},
     })
     # Pending settlements = total balance owed to workers (accrued - paid - adv - deduct).
-    txns = await db.transactions.find({"owner_id": uid}, {"_id": 0, "type": 1, "amount": 1}).to_list(20000)
+    txns = await get_worker_transactions(uid)
     summary = ledger_summary(txns)
     pending = max(0, summary["balance"])
     day_name = today.strftime("%A, %d %b")
@@ -3291,7 +3505,7 @@ async def _build_payroll_reminder(user: dict) -> Optional[str]:
     workers = await db.workers.find({"owner_id": uid}, {"_id": 0}).to_list(1000)
     if not workers:
         return None
-    txns = await db.transactions.find({"owner_id": uid}, {"_id": 0}).to_list(20000)
+    txns = await get_worker_transactions(uid)
     txns_by_worker: Dict[str, list] = {}
     for t in txns:
         txns_by_worker.setdefault(t.get("worker_id"), []).append(t)
@@ -3465,6 +3679,21 @@ api.include_router(_build_expenses_router(_ExpensesDeps(
     image_content_cls=ImageContent,
     receipt_system=RECEIPT_SYSTEM,
     app_name=APP_NAME,
+    logger=logger,
+)))
+
+from routes.estimates import build_router as _build_estimates_router, Deps as _EstimatesDeps
+api.include_router(_build_estimates_router(_EstimatesDeps(
+    db=db,
+    get_current_user=get_current_user,
+    new_id=new_id,
+    now_iso=now_iso,
+    today_str=today_str,
+    country_ctx=country_ctx,
+    money_str=money_str,
+    rate_limit=rate_limit,
+    ai_json=ai_json,
+    ai_text=ai_text,
     logger=logger,
 )))
 

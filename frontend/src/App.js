@@ -25,6 +25,7 @@ import { BlogIndex, BlogPost } from "@/pages/Blog";
 import Contact from "@/pages/Contact";
 import Attendance from "@/pages/Attendance";
 import Pricing from "@/pages/Pricing";
+import Estimates from "@/pages/Estimates";
 
 function Protected({ children, allowIncomplete = false }) {
   const { user, loading } = useAuth();
@@ -109,6 +110,7 @@ function AppRouter() {
         <Route path="/knowledge" element={<Knowledge />} />
         <Route path="/insights" element={<Insights />} />
         <Route path="/expenses" element={<Expenses />} />
+        <Route path="/estimates" element={<Estimates />} />
         <Route path="/help" element={<Help />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

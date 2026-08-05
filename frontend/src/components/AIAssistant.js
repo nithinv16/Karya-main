@@ -4,15 +4,15 @@ import { Sparkle, X, PaperPlaneRight } from "@phosphor-icons/react";
 import VoiceButton from "@/components/VoiceButton";
 
 const suggestions = [
+  "How do I create a project estimate?",
   "How much do I owe Rajesh?",
   "What is today's labour cost?",
   "Which workers have taken advances?",
-  "Who worked at Skyline Towers this week?",
 ];
 
 export default function AIAssistant({ open, onClose }) {
   const [messages, setMessages] = useState([
-    { role: "ai", text: "I'm your operations assistant. Ask me about workforce, wages, advances, settlements or projects." },
+    { role: "ai", text: "I'm your operations assistant. Ask me about workforce, wages, estimates, quotations, compliance, or projects." },
   ]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);

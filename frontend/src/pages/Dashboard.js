@@ -6,7 +6,7 @@ import { PageHeader, Stat, Badge, Spinner } from "@/components/ui-bits";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { Warning, TrendUp, Buildings, Handshake, UsersThree, Broadcast } from "@phosphor-icons/react";
+import { Warning, TrendUp, Buildings, Handshake, UsersThree, Broadcast, Calculator } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { formatMoney, getCountry } from "@/lib/country";
 
@@ -30,6 +30,11 @@ export default function Dashboard() {
         overline="Project Intelligence"
         title="Command Center"
         desc="Real-time picture of labour, cost, settlements and compliance health across all sites."
+        action={
+          <button data-testid="dashboard-estimator-btn" onClick={() => navigate("/estimates")} className="flex items-center gap-2 border-2 border-[#09090B] px-4 py-2.5 text-sm font-semibold hover:bg-[#09090B] hover:text-white transition-colors duration-200">
+            <Calculator size={16} weight="duotone" /> Estimator
+          </button>
+        }
       />
 
       {empty ? (
